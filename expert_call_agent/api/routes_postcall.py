@@ -17,10 +17,15 @@ async def summarize(request: Request, session_id: str):
         raise HTTPException(400, "No transcript to summarize")
 
     agent = PostCallSummarizerAgent(gemini, claude)
-    summary = await agent.run(session)
-    await sessions.update_session(session_id, final_summary=summary, status="post_call")
+    result = await agent.run(session)
+    await sessions.update_session(
+        session_id,
+        final_summary=result["markdown"],
+        key_takeaways=result["takeaways"],
+        status="post_call",
+    )
 
-    return {"summary": summary}
+    return {"summary": result["markdown"], "takeaways": result["takeaways"]}
 
 
 @router.get("/export/{session_id}")
