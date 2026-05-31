@@ -125,13 +125,27 @@ let audioCtx = null, micActive = false, waveRaf = null;
 // and a poll loop cuts the segment after a trailing pause. (Fixed-interval chunking
 // produced headerless 2nd+ fragments the backend's STT couldn't decode — that bug
 // is the whole reason this endpointer exists.)
-const VAD_POLL_MS = 50;             // energy sampling cadence
-const VAD_SILENCE_RMS = 0.015;      // RMS at/under this counts as silence
-const VAD_SILENCE_MS = 800;         // trailing silence that ends an utterance
-const VAD_MIN_UTTERANCE_MS = 400;   // drop blips shorter than this
-const VAD_MAX_UTTERANCE_MS = 20000; // force-cut a long monologue
+// Tunable live without a redeploy via URL params, e.g. ?vadK=4&vadSilence=600&vadFloorMax=0.05
+const _vp = new URLSearchParams(location.search);
+const _vn = (k, d) => { const v = parseFloat(_vp.get(k)); return Number.isFinite(v) ? v : d; };
+const VAD_POLL_MS = _vn('vadPoll', 50);             // energy sampling cadence
+const VAD_SILENCE_MS = _vn('vadSilence', 800);      // trailing silence that ends an utterance
+const VAD_MIN_UTTERANCE_MS = _vn('vadMin', 400);    // drop blips shorter than this
+const VAD_MAX_UTTERANCE_MS = _vn('vadMax', 20000);  // force-cut a long monologue
+// Adaptive endpointing: the speech threshold rides above the measured ambient noise
+// floor (threshold = floor * K, clamped) instead of a fixed level, so a quiet mic and
+// a noisy room both self-calibrate. The floor is seeded from the first VAD_CALIB_FRAMES
+// of each mic session (silent, thanks to the opening delay), then tracked down fast /
+// up slow — speech never raises it, so the threshold can't drift up under a long utterance.
+const VAD_RMS_K = _vn('vadK', 3.0);                 // threshold = noiseFloor * K
+const VAD_RMS_MIN = _vn('vadFloorMin', 0.012);      // threshold never below this (clean room)
+const VAD_RMS_MAX = _vn('vadFloorMax', 0.045);      // threshold never above this (noisy room)
+const VAD_SPEECH_FRAMES = _vn('vadFrames', 2);      // consecutive loud frames before "speech"
+const VAD_CALIB_FRAMES = _vn('vadCalib', 8);        // frames (~400ms) to seed the ambient floor
 let micAnalyser = null, vadInterval = null, vadBuf = null;
 let segmentStart = 0, lastVoice = 0, sawSpeech = false, segmentValid = false;
+let peakRms = 0, noiseFloor = 0, speechFrames = 0, curThreshold = 0;
+let calibFrames = 0, calibSum = 0;                  // ambient-calibration state (per mic session)
 
 const forcedSession = new URLSearchParams(location.search).get('session');
 const $ = id => document.getElementById(id);
@@ -270,6 +284,7 @@ async function startMic(){
   // After each cut, immediately begin the next segment (unless the mic is off).
   micRecorder.onstop = () => { if (micActive && micRecorder) startSegment(); };
 
+  noiseFloor = 0; calibFrames = 0; calibSum = 0; // re-calibrate ambient on each mic-on
   startSegment();
   vadInterval = setInterval(vadTick, VAD_POLL_MS);
   setMic(true, 'Mic on — Shaun hears you');
@@ -280,14 +295,19 @@ function startSegment(){
   segmentStart = performance.now();
   lastVoice = segmentStart;
   sawSpeech = false;
+  peakRms = 0;
+  speechFrames = 0;
   segmentValid = false;
   if (micRecorder && micRecorder.state === 'inactive') micRecorder.start(); // no timeslice → one blob at stop()
 }
 
 // End the current segment; ondataavailable decides whether to actually send it.
-function endSegment(){
+function endSegment(reason){
   const dur = performance.now() - segmentStart;
   segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
+  console.log(`[VAD] ${segmentValid ? 'send' : 'drop'} (${reason})`,
+              { ms: Math.round(dur), peakRms: +peakRms.toFixed(3),
+                thr: +curThreshold.toFixed(3), floor: +noiseFloor.toFixed(3), sawSpeech });
   if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop → startSegment()
 }
 
@@ -299,9 +319,31 @@ function vadTick(){
   for (let i = 0; i < vadBuf.length; i++){ const v = (vadBuf[i] - 128) / 128; sum += v * v; }
   const rms = Math.sqrt(sum / vadBuf.length);
   const now = performance.now();
-  if (rms >= VAD_SILENCE_RMS){ sawSpeech = true; lastVoice = now; }
-  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment();
-  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment();
+  if (rms > peakRms) peakRms = rms;
+
+  // Seed the ambient floor from the first frames of the mic session, then don't
+  // endpoint until calibration is done (the opening delay keeps this window silent).
+  if (calibFrames < VAD_CALIB_FRAMES) {
+    calibSum += rms;
+    if (++calibFrames >= VAD_CALIB_FRAMES) noiseFloor = calibSum / VAD_CALIB_FRAMES;
+    return;
+  }
+
+  // Speech threshold rides above the measured ambient floor (clamped).
+  curThreshold = Math.min(VAD_RMS_MAX, Math.max(VAD_RMS_MIN, noiseFloor * VAD_RMS_K));
+  const loud = rms >= curThreshold;
+  if (loud) {
+    lastVoice = now;
+    if (++speechFrames >= VAD_SPEECH_FRAMES) sawSpeech = true; // debounce out single-frame blips
+  } else {
+    speechFrames = 0;
+  }
+  // Track ambient down fast, up slowly during non-speech; speech never raises it.
+  if (rms < noiseFloor) noiseFloor += (rms - noiseFloor) * 0.3;
+  else if (!loud) noiseFloor += (rms - noiseFloor) * 0.05;
+
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment('pause');
+  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment('max-length');
 }
 
 // Tear down the mic + VAD without touching the WS or the state line.
