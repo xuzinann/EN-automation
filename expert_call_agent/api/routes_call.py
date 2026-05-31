@@ -114,6 +114,13 @@ async def end_call(request: Request, session_id: str):
     return {"status": "post_call", "session_id": session_id}
 
 
+@router.get("/active")
+async def active_call(request: Request):
+    """The live session id for the expert page to auto-join (None if no live call)."""
+    sessions = request.app.state.sessions
+    return {"session_id": sessions.get_live_session_id()}
+
+
 @router.websocket("/ws/{session_id}")
 async def call_websocket(ws: WebSocket, session_id: str):
     await ws.accept()
