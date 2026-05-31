@@ -243,8 +243,8 @@
       </details>
     </div>
     <div class="call-panel" id="suggestions-panel">
-      <h3>Agent Suggestions</h3>
-      <div id="suggestions-list"><p style="color:#999; font-size:13px;">Suggestions will appear here during the call.</p></div>
+      <h3>AI Interviewer</h3>
+      <div id="suggestions-list"><p style="color:#999; font-size:13px;">The AI's questions will appear here as it conducts the call.</p></div>
     </div>
     <div class="call-panel" id="notes-panel">
       <h3>Notes & Takeaways</h3>
@@ -252,10 +252,6 @@
       <div style="margin-top:10px;">
         <strong style="font-size:12px; text-transform:uppercase; color:#666;">Notes</strong>
         <div id="notes-list"></div>
-      </div>
-      <div style="margin-top:10px;">
-        <strong style="font-size:12px; text-transform:uppercase; color:#666;">Key Takeaways</strong>
-        <div id="takeaways-list"></div>
       </div>
     </div>
   </div>
@@ -681,17 +677,14 @@ function handleWSMessage(msg) {
     case 'transcript':
       addTranscript(msg.entry);
       break;
-    case 'suggested_question':
-      addSuggestion(msg);
+    case 'ai_turn':
+      addAiTurn(msg);
       break;
     case 'note':
       addNote(msg.note);
       break;
     case 'coverage_update':
       updateCoverage(msg.coverage);
-      break;
-    case 'key_takeaways':
-      updateTakeaways(msg.takeaways);
       break;
     case 'tts_audio':
       playAudio(msg.data);
@@ -719,17 +712,16 @@ function addTranscript(entry) {
   list.parentElement.scrollTop = list.parentElement.scrollHeight;
 }
 
-function addSuggestion(msg) {
+function addAiTurn(msg) {
   const list = document.getElementById('suggestions-list');
   if (list.querySelector('p')) list.innerHTML = '';
 
   const card = document.createElement('div');
   card.className = 'suggestion-card';
   card.innerHTML = `
-    <div class="agent-tag">${msg.agent || 'agent'} — ${msg.action_type || 'question'}</div>
+    <div class="agent-tag">${msg.agent || 'agent'} — ${(msg.flag_type || '').replace('_',' ')}</div>
     <div class="question">${msg.question}</div>
     <div class="rationale">${msg.rationale || ''}</div>
-    <button class="btn-outline btn-sm" style="margin-top:6px;" onclick="askQuestion('${msg.question.replace(/'/g, "\\'")}')">Ask This</button>
   `;
   list.insertBefore(card, list.firstChild);
 }
@@ -756,11 +748,6 @@ function updateCoverage(coverage) {
   section.innerHTML = html;
 }
 
-function updateTakeaways(takeaways) {
-  const list = document.getElementById('takeaways-list');
-  list.innerHTML = takeaways.map(t => `<div class="takeaway-item">${t}</div>`).join('');
-}
-
 function playAudio(b64) {
   const audio = new Audio('data:audio/mp3;base64,' + b64);
   audio.play().catch(e => console.log('Audio play blocked:', e));
@@ -771,11 +758,6 @@ function sendExpertText() {
   if (!input.value.trim() || !ws) return;
   ws.send(JSON.stringify({ type: 'text_input', text: input.value.trim(), speaker: 'expert' }));
   input.value = '';
-}
-
-function askQuestion(q) {
-  if (!ws) return;
-  ws.send(JSON.stringify({ type: 'ask_question', question: q }));
 }
 
 function runDemo() {
@@ -802,7 +784,16 @@ async function generateSummary() {
     const resp = await fetch(`/api/postcall/summarize/${sessionId}`, { method: 'POST' });
     const data = await resp.json();
     document.getElementById('summary-panel').classList.remove('hidden');
-    document.getElementById('summary-content').innerHTML = markdownToHtml(data.summary);
+    let html = '';
+    if (data.takeaways && data.takeaways.length) {
+      html += '<div style="margin-bottom:16px; padding:12px; background:#e8f5e9; border-radius:6px;">';
+      html += '<strong style="font-size:12px; text-transform:uppercase; color:#2e7d32;">Key Takeaways</strong>';
+      html += '<ul style="margin:8px 0 0 18px; font-size:13px;">';
+      html += data.takeaways.map(t => `<li>${t}</li>`).join('');
+      html += '</ul></div>';
+    }
+    html += markdownToHtml(data.summary);
+    document.getElementById('summary-content').innerHTML = html;
     setStatus('summary-status', 'Summary generated.');
   } catch(e) {
     setStatus('summary-status', 'Error: ' + e.message);
