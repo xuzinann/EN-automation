@@ -1,4 +1,3 @@
-import json
 from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction, CoverageStatus
 import config
@@ -6,6 +5,7 @@ import config
 
 class FollowUpAgent(BaseAgent):
     name = "followup_agent"
+    temperature = config.STRUCTURED_TEMPERATURE
     system_prompt = (
         "You monitor an expert call for coverage completeness. "
         "Track which interview guide sections have been addressed. "
@@ -15,7 +15,7 @@ class FollowUpAgent(BaseAgent):
         "{\n"
         '  "coverage": [{"section": "string", "covered_pct": 0.0-1.0, '
         '"answered_questions": ["strings"], "remaining_questions": ["strings"]}],\n'
-        '  "followups": [{"question": "string", "reason": "string", "priority": 0.0-1.0}],\n'
+        '  "followups": [{"question": "string", "reason": "string"}],\n'
         '  "contradictions": [{"claim": "string", "conflicts_with": "string"}]\n'
         "}\n"
         "No markdown fences or commentary."
@@ -34,16 +34,18 @@ class FollowUpAgent(BaseAgent):
             "Analyze coverage completeness, suggest follow-ups, and flag contradictions."
         )
         response = await self._call_model(prompt)
-        parsed = self._parse_json(response)
+        parsed = self._safe_parse_json(response, {})
 
         actions = []
         for fu in parsed.get("followups", []):
+            question = (fu.get("question") or "").strip()
+            if not question:
+                continue
             actions.append(AgentAction(
                 agent_name=self.name,
                 action_type="followup",
                 flag_type="probe",
-                content=fu.get("question", ""),
-                priority=fu.get("priority", 0.6),
+                content=question,
                 metadata={"reason": fu.get("reason", "")},
             ))
 
@@ -57,7 +59,6 @@ class FollowUpAgent(BaseAgent):
                     f"{contradiction.get('claim', '')} vs "
                     f"{contradiction.get('conflicts_with', '')}. Could you clarify?"
                 ),
-                priority=0.9,
                 metadata={"reason": "contradiction with known data"},
             ))
 

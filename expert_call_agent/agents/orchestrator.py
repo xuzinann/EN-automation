@@ -34,10 +34,12 @@ class OrchestratorAgent(BaseAgent):
             f"Next point to raise ({flag.flag_type}): {flag.content}\n\n"
             f"Instruction: {intent}. Compose the single spoken turn now."
         )
-        # Orchestrator is always the Gemini Flash provider (see config.AGENT_MODELS);
+        # Orchestrator is the Gemini Flash provider (see config.AGENT_MODELS);
         # call it directly for a plain-text (non-JSON) response.
-        return await self.gemini.generate(
+        result = await self.gemini.generate(
             model=self.model_name,
             prompt=prompt,
             system_instruction=self.system_prompt,
+            temperature=self.temperature,
         )
+        return result or ""
