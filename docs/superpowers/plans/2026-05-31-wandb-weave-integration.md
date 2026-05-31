@@ -1,80 +1,89 @@
-# W&B Weave Integration Implementation Plan
+# W&B Weave Observability + Eval Harness — Implementation Plan (reconciled)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Weights & Biases **Weave** observability + an evaluation harness to the Expert Call Agent so every agent turn, LLM call, and queue decision is traced, and flag-quality is measurable — targeting the hackathon's *Best Use of Weave* prize and the *Agent Orchestration / Technical Execution* criteria.
+**Goal:** Add Weights & Biases **Weave** tracing + a small evaluation harness to the Expert Call Agent so every agent turn, LLM/STT call, and the deterministic queue decision is observable, and QA flag-quality is measurable — targeting the hackathon's *Best Use of Weave* prize and the *Agent Orchestration / Technical Execution* criteria.
 
-**Architecture:** Weave is added as an **optional, no-op-when-absent** layer. A tiny `observability.py` module wraps `weave.init()` and exposes an `op` decorator that falls back to identity when Weave isn't installed/enabled, so the app still runs without a W&B account. We decorate the client methods, `BaseAgent._call_model`, and each agent's `run()` so Weave reconstructs the full multi-agent harness as a nested trace tree. A separate `evals/` package scores flag quality with `weave.Evaluation`.
+**Architecture:** Weave is an **optional, no-op-when-absent** layer. A tiny `observability.py` exposes `init_weave()` + an `op` decorator that degrades to identity when Weave is missing/disabled, so the app still runs with no W&B account. We decorate the two client classes, `BaseAgent._call_model` **and** `_call_model_text`, and each agent's `run()`; Weave then reconstructs each agent call as a nested trace (`agent.run → _call_model → client.generate`). A separate `evals/` package scores flag quality with `weave.Evaluation` over a small hand-labeled dataset.
 
-**Tech Stack:** Python 3.12, FastAPI, `google-genai` (Gemini on Vertex), `httpx` (Claude on Vertex `:rawPredict`), **`weave`** (new), **`pytest`** (new, dev/test).
+**Tech Stack:** Python 3.12, FastAPI, `google-genai` (Gemini on Vertex), `httpx` (Claude + STT + TTS on Vertex/Cloud, raw REST), **`weave`** (new).
 
 ---
 
-## Background for the engineer (zero-context assumed)
+## Decisions baked into this plan (confirmed with the user)
 
-- The app lives in `expert_call_agent/`. It runs via `python run.py` (uvicorn on port 8888). All imports are rooted at `expert_call_agent/` (see `sys.path.insert` in `run.py` and `api/app.py`), so **import paths are top-level** (e.g. `from clients.gemini_client import GeminiClient`, `from models import CallSession`).
-- LLM calls funnel through two clients: `clients/gemini_client.py` (`GeminiClient.generate`, `.generate_with_audio`) and `clients/claude_client.py` (`ClaudeClient.generate`). Claude does **not** use the Anthropic SDK — it's raw `httpx` to Vertex — so Weave's SDK auto-integrations won't catch it. That's exactly why we use the `@op()` decorator (works on any function).
-- All agents subclass `agents/base_agent.py::BaseAgent`. Every agent calls `self._call_model(...)`. Each agent implements `async def run(self, session, **kwargs)`.
-- The live-call orchestration is in `api/routes_call.py` — it fans out agents with `asyncio.gather(...)`, then a deterministic queue (in `agents/orchestrator.py`) selects one action.
-- **Auth:** Weave/W&B needs a W&B API key. Vertex (Gemini/Claude) uses ADC (already configured). The eval runner makes real Vertex calls, so it must run in an environment with both `WANDB_API_KEY` and working ADC.
-- There is **no `tests/` directory and no pytest yet** — Task 1 adds pytest. Tests in this plan avoid `pytest-asyncio` by calling `asyncio.run(...)` inside the test, so no extra plugin is needed.
-- `.gitignore` already ignores `.env`, `*.mp3`, `*.wav`, `__pycache__/`, `.claude/`.
+1. **W&B key is available.** A `WANDB_API_KEY` will be provided (free from https://wandb.ai/authorize). The plan therefore ends with a *real* trace + eval run, not just a disabled smoke.
+2. **Lightweight smoke, not TDD.** Per the repo's hackathon posture, **no `pytest` dependency.** Verification is import/parse smokes (`WEAVE_DISABLED=1 python3 -c …`) plus a one-line inline scorer assert. (This is the one deliberate divergence from the older draft of this plan.)
+3. **Agents/clients only — `routes_call.py` is NOT touched.** We do not add a per-turn root span. Expected trace shape: during each expert turn the three agents run via `asyncio.gather`, so Weave records **three sibling trace trees** (`qa_agent.run`, `followup_agent.run`, `note_taker.run`), each nesting its `_call_model → client.generate`; the spoken turn is a fourth tree (`orchestrator.run → _call_model_text → claude.generate`). Pre-call shows `context_ingestion.run` / `call_guide_drafter.run`; post-call shows `post_call_summarizer.run`. This keeps the live hot path untouched.
 
-> **Weave API note:** API shapes below (`weave.init`, `weave.op`, `weave.Evaluation`) match Weave ≥ 0.51. If a signature differs in the installed version, check https://weave-docs.wandb.ai — the structure of this plan does not change.
+---
+
+## Why the previous draft of this file was rewritten (context, not steps)
+
+The earlier version predated the deterministic-orchestration refactor and was stale: it decorated `agents/summarizer.py` (since **deleted**), missed `_call_model_text` (so the **orchestrator's** LLM call would be invisible), assumed the queue lived in `orchestrator.py` (it's now `live_orchestration.py::LiveCallQueue`), traced only one STT client (there are now two), and used port 8888 + a `pip install` that PEP 668 blocks on this VM. All corrected below.
+
+---
+
+## Project conventions (read before starting)
+
+- Work **directly on `main`** — no feature branches.
+- `python3` only (`python` is not on PATH). All commands assume cwd `/home/kevin/EN-automation/expert_call_agent` unless stated.
+- The VM is **PEP 668 externally-managed**; installs MUST use `python3 -m pip install --user --break-system-packages …` (plain `--user` is blocked; deps live in `~/.local`).
+- The server runs on **`127.0.0.1:8899`** (NOT 8888 — another user's copy of this app is on 8888 on this shared VM). `run.py`'s default is 8888, so launch the server explicitly on 8899 for any smoke (see Task 10).
+- Imports are top-level rooted at `expert_call_agent/` (see `sys.path.insert` in `run.py`/`api/app.py`), e.g. `from clients.claude_client import ClaudeClient`, `import config`.
+- Commit message trailer (every commit): `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
 
 ---
 
 ## File Structure
 
-**New files**
-- `expert_call_agent/observability.py` — `init_weave()`, `weave_enabled()`, and the `op` decorator. Single responsibility: make Weave optional and centralized.
-- `expert_call_agent/evals/__init__.py` — marks the package.
-- `expert_call_agent/evals/scorers.py` — pure scorer functions (no I/O, fully unit-testable).
-- `expert_call_agent/evals/flag_dataset.json` — small hand-labeled eval dataset.
-- `expert_call_agent/evals/run_flag_eval.py` — builds + runs the `weave.Evaluation`.
-- `expert_call_agent/tests/__init__.py`
-- `expert_call_agent/tests/test_observability.py` — tests the `op` passthrough + `init_weave` guard.
-- `expert_call_agent/tests/test_scorers.py` — tests the scorers.
-- `expert_call_agent/.env.example` — documents required env vars.
+| File | Responsibility | Change |
+|---|---|---|
+| `expert_call_agent/requirements.txt` | Declare `weave` | Modify (+1 line) |
+| `expert_call_agent/observability.py` | The optional-Weave seam: `op`, `init_weave`, `weave_enabled` | **Create** |
+| `expert_call_agent/api/app.py` | Start tracing on boot | Modify (import + 1 line in lifespan) |
+| `expert_call_agent/clients/claude_client.py` | Trace `generate` | Modify (import + `@op()`) |
+| `expert_call_agent/clients/gemini_client.py` | Trace `generate`, `generate_with_audio` | Modify (import + 2× `@op()`) |
+| `expert_call_agent/clients/cloud_stt_client.py` | Trace `transcribe` (Chirp 2, default STT) | Modify (import + `@op()`) |
+| `expert_call_agent/clients/stt_client.py` | Trace `transcribe` (Gemini STT fallback) | Modify (import + `@op()`) |
+| `expert_call_agent/agents/base_agent.py` | Trace `_call_model` + `_call_model_text` | Modify (import + 2× `@op()`) |
+| `expert_call_agent/agents/{qa_agent,followup_agent,note_taker,orchestrator,context_ingestion,call_guide_drafter,post_call_summarizer}.py` | Trace each `run` | Modify (import + `@op()`) ×7 |
+| `expert_call_agent/evals/__init__.py` | Package marker | **Create** |
+| `expert_call_agent/evals/scorers.py` | Pure scorer functions | **Create** |
+| `expert_call_agent/evals/flag_dataset.json` | Hand-labeled QA eval dataset | **Create** |
+| `expert_call_agent/evals/run_flag_eval.py` | `weave.Evaluation` runner | **Create** |
+| `expert_call_agent/.env.example` | Document env vars | **Create** |
 
-**Modified files**
-- `expert_call_agent/requirements.txt` — add `weave`, `pytest`.
-- `expert_call_agent/api/app.py` — call `init_weave()` on startup.
-- `expert_call_agent/clients/gemini_client.py` — `@op()` on `generate`, `generate_with_audio`.
-- `expert_call_agent/clients/claude_client.py` — `@op()` on `generate`.
-- `expert_call_agent/clients/stt_client.py` — `@op()` on `transcribe`.
-- `expert_call_agent/agents/base_agent.py` — `@op()` on `_call_model`.
-- `expert_call_agent/agents/{qa_agent,followup_agent,note_taker,orchestrator,summarizer,context_ingestion,call_guide_drafter,post_call_summarizer}.py` — `@op()` on each `run`.
+> **Not decorated, on purpose:** `tts_client.synthesize` (returns raw audio `bytes` — Weave would log large/noisy binary), and the agents' `get_latest_*` helper getters (only `run` is the meaningful unit). The `LiveCallQueue` is pure deterministic Python with no LLM call — left untraced because (a) the "agents/clients only" decision keeps us out of the hot path, and (b) it would need `routes_call.py` wiring to appear as a span.
 
 ---
 
-## Task 1: Add dependencies
+## Task 1: Declare and install `weave`
 
 **Files:**
 - Modify: `expert_call_agent/requirements.txt`
 
-- [ ] **Step 1: Add weave and pytest to requirements**
+- [ ] **Step 1: Append weave to requirements**
 
-Append these two lines to `expert_call_agent/requirements.txt`:
+Append this single line to the end of `expert_call_agent/requirements.txt` (no `pytest` — lightweight posture):
 
 ```
 weave>=0.51.0
-pytest>=8.0.0
 ```
 
-- [ ] **Step 2: Install**
+- [ ] **Step 2: Install (PEP 668 — note the flags)**
 
 Run (from `expert_call_agent/`):
 ```bash
-pip install -r requirements.txt
+python3 -m pip install --user --break-system-packages "weave>=0.51.0"
 ```
-Expected: installs `weave`, `pytest`, and their deps with no errors.
+Expected: installs `weave` and its deps (pulls a fair amount, incl. its own client libs) into `~/.local`, no errors.
 
 - [ ] **Step 3: Verify weave imports**
 
 Run:
 ```bash
-python -c "import weave, pytest; print('weave', weave.__version__)"
+python3 -c "import weave; print('weave', weave.__version__)"
 ```
 Expected: prints a weave version (e.g. `weave 0.51.x`), no traceback.
 
@@ -82,86 +91,30 @@ Expected: prints a weave version (e.g. `weave 0.51.x`), no traceback.
 
 ```bash
 git add expert_call_agent/requirements.txt
-git commit -m "chore: add weave and pytest dependencies"
+git commit -m "chore: add weave dependency
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 2: Optional observability module (`op` decorator + init)
+## Task 2: The optional observability seam (`observability.py`)
 
-This module is the seam that makes Weave optional. Everything else imports `op` and `init_weave` from here.
+This module is the single seam that makes Weave optional. Everything else imports `op` / `init_weave` from here. It improves on the older draft in two ways: `op` degrades to identity when **disabled** (not just when uninstalled), and `init_weave` swallows a failed `weave.init` (e.g. missing key) so the app never crashes on boot.
 
 **Files:**
 - Create: `expert_call_agent/observability.py`
-- Test: `expert_call_agent/tests/__init__.py`, `expert_call_agent/tests/test_observability.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create the module**
 
-Create `expert_call_agent/tests/__init__.py` (empty file).
-
-Create `expert_call_agent/tests/test_observability.py`:
-
-```python
-import asyncio
-import os
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import observability
-
-
-def test_op_preserves_sync_return():
-    @observability.op()
-    def add(a, b):
-        return a + b
-    assert add(2, 3) == 5
-
-
-def test_op_preserves_async_return():
-    @observability.op()
-    async def add(a, b):
-        return a + b
-    assert asyncio.run(add(2, 3)) == 5
-
-
-def test_op_preserves_function_name():
-    @observability.op()
-    def my_func():
-        return 1
-    assert my_func.__name__ == "my_func"
-
-
-def test_weave_disabled_env_disables(monkeypatch):
-    monkeypatch.setenv("WEAVE_DISABLED", "1")
-    assert observability.weave_enabled() is False
-
-
-def test_init_weave_noop_when_disabled(monkeypatch):
-    monkeypatch.setenv("WEAVE_DISABLED", "1")
-    # Must not raise and must not require network / API key.
-    assert observability.init_weave() is False
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run (from `expert_call_agent/`):
-```bash
-pytest tests/test_observability.py -v
-```
-Expected: FAIL — `ModuleNotFoundError: No module named 'observability'`.
-
-- [ ] **Step 3: Write the implementation**
-
-Create `expert_call_agent/observability.py`:
+Create `expert_call_agent/observability.py` with exactly:
 
 ```python
 """Optional Weave (W&B) observability.
 
-Designed to be a no-op when weave is not installed or is explicitly disabled,
-so the app and tests run without a W&B account. Set WEAVE_DISABLED=1 to turn
-tracing off even when weave is installed.
+A no-op when weave is not installed or is explicitly disabled, so the app runs
+without a W&B account. Set WEAVE_DISABLED=1 to turn tracing off even when weave
+is installed (e.g. when you have no WANDB_API_KEY).
 """
 import os
 
@@ -184,8 +137,10 @@ def weave_enabled() -> bool:
 def init_weave() -> bool:
     """Initialize Weave once. Returns True if tracing is now active.
 
-    Reads WEAVE_PROJECT (default 'http418-expert-call'). Safe to call multiple
-    times. No-ops (returns False) when weave is unavailable or disabled.
+    Reads WEAVE_PROJECT (default 'http418-expert-call'). Safe to call repeatedly.
+    No-ops (returns False) when weave is unavailable/disabled, and never raises —
+    a failed init (e.g. no WANDB_API_KEY) just disables tracing instead of
+    crashing app startup.
     """
     global _initialized
     if _initialized:
@@ -193,19 +148,25 @@ def init_weave() -> bool:
     if not weave_enabled():
         return False
     project = os.getenv("WEAVE_PROJECT", "http418-expert-call")
-    weave.init(project)
+    try:
+        weave.init(project)
+    except Exception as e:  # missing key, network, etc. — degrade, don't crash
+        print(f"[observability] weave.init failed ({e!r}); tracing disabled")
+        return False
     _initialized = True
     return True
 
 
 def op(func=None, **kwargs):
-    """`weave.op` when available, else an identity decorator.
+    """`weave.op` when tracing is enabled, else an identity decorator.
 
     Use with parentheses: `@op()`. Works on sync and async functions and on
-    methods. When weave is not installed, returns the function unchanged.
+    methods. When weave is missing OR WEAVE_DISABLED is set, returns the function
+    unchanged (zero weave involvement). Decoration happens at import time, so set
+    WEAVE_DISABLED before importing app modules for a clean no-op.
     """
     def decorator(f):
-        if _WEAVE_INSTALLED:
+        if weave_enabled():
             return weave.op(**kwargs)(f)
         return f
 
@@ -214,37 +175,54 @@ def op(func=None, **kwargs):
     return decorator
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Smoke — passthrough works disabled AND enabled-ish**
 
-Run:
+Run (from `expert_call_agent/`):
 ```bash
-pytest tests/test_observability.py -v
+WEAVE_DISABLED=1 python3 -c "
+import observability as o
+@o.op()
+def add(a, b): return a + b
+@o.op()
+async def aadd(a, b): return a + b
+import asyncio
+assert add(2, 3) == 5
+assert asyncio.run(aadd(2, 3)) == 5
+assert add.__name__ == 'add'
+assert o.weave_enabled() is False
+assert o.init_weave() is False
+print('observability OK (disabled)')
+"
 ```
-Expected: PASS (5 passed). The async/sync tests pass whether or not weave is installed because `op` preserves behavior either way.
+Expected: prints `observability OK (disabled)`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add expert_call_agent/observability.py expert_call_agent/tests/__init__.py expert_call_agent/tests/test_observability.py
-git commit -m "feat: add optional Weave observability module"
+git add expert_call_agent/observability.py
+git commit -m "feat: optional Weave observability seam (op + init_weave)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 3: Initialize Weave at app startup
+## Task 3: Start tracing on app boot
 
 **Files:**
-- Modify: `expert_call_agent/api/app.py` (lifespan, around line 21-28)
+- Modify: `expert_call_agent/api/app.py`
 
-- [ ] **Step 1: Import and call `init_weave` in the lifespan**
+- [ ] **Step 1: Import `init_weave`**
 
-In `expert_call_agent/api/app.py`, add the import near the other top-level imports (after line 18):
+In `api/app.py`, after the existing `import config` (line 11), add:
 
 ```python
 from observability import init_weave
 ```
 
-Then make `init_weave()` the first line inside the `lifespan` function. Change:
+- [ ] **Step 2: Call it first in the lifespan**
+
+In `api/app.py`, the lifespan currently begins:
 
 ```python
 @asynccontextmanager
@@ -252,101 +230,112 @@ async def lifespan(app: FastAPI):
     app.state.gemini = GeminiClient()
 ```
 
-to:
+Change it to:
 
 ```python
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_weave()  # starts Weave tracing if WANDB_API_KEY is set and weave installed
+    init_weave()  # starts Weave tracing if enabled (WANDB_API_KEY set, weave installed)
     app.state.gemini = GeminiClient()
 ```
 
-- [ ] **Step 2: Verify the app still boots with tracing disabled**
+- [ ] **Step 3: Verify the app still builds with tracing disabled**
 
 Run (from `expert_call_agent/`):
 ```bash
-WEAVE_DISABLED=1 python -c "from api.app import create_app; create_app(); print('app builds OK')"
+WEAVE_DISABLED=1 python3 -c "from api.app import create_app; create_app(); print('app builds OK')"
 ```
-Expected: prints `app builds OK`, no traceback. (Construction doesn't trigger lifespan, but this confirms imports are clean.)
+Expected: prints `app builds OK`, no traceback. (Construction doesn't run the lifespan, but this confirms imports are clean.)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add expert_call_agent/api/app.py
-git commit -m "feat: initialize Weave on app startup"
+git commit -m "feat: initialize Weave on app startup
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 4: Trace the client layer (lowest-level Vertex calls)
+## Task 4: Trace the client layer (the lowest-level Vertex/Cloud calls)
 
 **Files:**
-- Modify: `expert_call_agent/clients/gemini_client.py`
 - Modify: `expert_call_agent/clients/claude_client.py`
+- Modify: `expert_call_agent/clients/gemini_client.py`
+- Modify: `expert_call_agent/clients/cloud_stt_client.py`
 - Modify: `expert_call_agent/clients/stt_client.py`
 
-- [ ] **Step 1: Decorate GeminiClient methods**
+For each file: add `from observability import op` alongside the existing top-of-file imports, then put `@op()` on its own line directly above the target `async def`, at the method's indentation (4 spaces).
 
-In `clients/gemini_client.py`, add the import at the top (after `import config`):
-```python
-from observability import op
-```
-Add `@op()` directly above both `async def generate(` and `async def generate_with_audio(`:
+- [ ] **Step 1: `claude_client.py` — decorate `generate`**
+
+Add the import at the top, then above `async def generate(` (line 21):
+
 ```python
     @op()
     async def generate(
-        self,
-        model: str,
-        prompt: str,
-        ...
+```
+
+- [ ] **Step 2: `gemini_client.py` — decorate `generate` and `generate_with_audio`**
+
+Add the import at the top, then `@op()` above `async def generate(` (line 18) **and** above `async def generate_with_audio(` (line 42):
+
+```python
+    @op()
+    async def generate(
 ```
 ```python
     @op()
     async def generate_with_audio(
-        self,
-        model: str,
-        ...
 ```
 
-- [ ] **Step 2: Decorate ClaudeClient.generate**
+- [ ] **Step 3: `cloud_stt_client.py` — decorate `transcribe` (Chirp 2, the default STT)**
 
-In `clients/claude_client.py`, add after `import config`:
-```python
-from observability import op
-```
-Add `@op()` above `async def generate(`:
+Add the import at the top, then above `async def transcribe(` (line 23):
+
 ```python
     @op()
-    async def generate(
-        self,
-        messages: list[dict],
-        ...
+    async def transcribe(
 ```
 
-- [ ] **Step 3: Decorate STTClient.transcribe**
+- [ ] **Step 4: `stt_client.py` — decorate `transcribe` (Gemini STT fallback)**
 
-Open `clients/stt_client.py`. Add `from observability import op` to its imports, and add `@op()` directly above the `async def transcribe(` method.
+`stt_client.py` already starts with `import config` (line 1). Add `from observability import op` after it, then above `async def transcribe(` (line 9):
 
-- [ ] **Step 4: Smoke-test imports**
+```python
+    @op()
+    async def transcribe(
+```
+
+- [ ] **Step 5: Import smoke**
 
 Run (from `expert_call_agent/`):
 ```bash
-WEAVE_DISABLED=1 python -c "from clients.gemini_client import GeminiClient; from clients.claude_client import ClaudeClient; from clients.stt_client import STTClient; print('clients import OK')"
+WEAVE_DISABLED=1 python3 -c "
+from clients.claude_client import ClaudeClient
+from clients.gemini_client import GeminiClient
+from clients.stt_client import STTClient
+from clients.cloud_stt_client import CloudSTTClient
+print('clients import OK')
+"
 ```
 Expected: prints `clients import OK`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add expert_call_agent/clients/gemini_client.py expert_call_agent/clients/claude_client.py expert_call_agent/clients/stt_client.py
-git commit -m "feat: trace client LLM/STT calls with Weave"
+git add expert_call_agent/clients/claude_client.py expert_call_agent/clients/gemini_client.py expert_call_agent/clients/cloud_stt_client.py expert_call_agent/clients/stt_client.py
+git commit -m "feat: trace client LLM/STT calls with Weave
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 5: Trace the agent layer (builds the harness trace tree)
+## Task 5: Trace the agent layer (builds the per-agent trace trees)
 
-Decorating `_call_model` (one place) plus each agent's `run` produces a nested trace: `qa_agent.run → BaseAgent._call_model → ClaudeClient.generate`, etc.
+Decorating `_call_model` + `_call_model_text` once in the base class, plus each agent's `run`, yields nested traces like `qa_agent.run → BaseAgent._call_model → ClaudeClient.generate` and `orchestrator.run → BaseAgent._call_model_text → ClaudeClient.generate`.
 
 **Files:**
 - Modify: `expert_call_agent/agents/base_agent.py`
@@ -354,133 +343,97 @@ Decorating `_call_model` (one place) plus each agent's `run` produces a nested t
 - Modify: `expert_call_agent/agents/followup_agent.py`
 - Modify: `expert_call_agent/agents/note_taker.py`
 - Modify: `expert_call_agent/agents/orchestrator.py`
-- Modify: `expert_call_agent/agents/summarizer.py`
 - Modify: `expert_call_agent/agents/context_ingestion.py`
 - Modify: `expert_call_agent/agents/call_guide_drafter.py`
 - Modify: `expert_call_agent/agents/post_call_summarizer.py`
-- Test: `expert_call_agent/tests/test_tracing_smoke.py`
 
-- [ ] **Step 1: Decorate `BaseAgent._call_model`**
+- [ ] **Step 1: `base_agent.py` — decorate both model-call helpers**
 
-In `agents/base_agent.py`, add `from observability import op` after `import config` (line 5), then add `@op()` above `async def _call_model(`:
+Add `from observability import op` after `from models import CallSession` (line 8). Then add `@op()` directly above **both**:
+
 ```python
     @op()
     async def _call_model(self, user_prompt: str) -> str:
 ```
+```python
+    @op()
+    async def _call_model_text(self, user_prompt: str) -> str:
+```
+
+> Do **not** decorate `_parse_json` / `_safe_parse_json` (pure, non-LLM helpers).
 
 - [ ] **Step 2: Decorate every agent's `run`**
 
-In **each** of these files, add `from observability import op` to the imports and put `@op()` on the line directly above its `async def run(`:
-`qa_agent.py`, `followup_agent.py`, `note_taker.py`, `orchestrator.py`, `summarizer.py`, `context_ingestion.py`, `call_guide_drafter.py`, `post_call_summarizer.py`.
+In **each** of these seven files, add `from observability import op` alongside the existing imports at the top, then put `@op()` on the line directly above its `async def run(`. The exact `run` lines:
 
-Example for `qa_agent.py` (the `run` is at line 23):
+- `qa_agent.py` (line 27): `    async def run(self, session: CallSession, **kwargs) -> AgentAction | None:`
+- `followup_agent.py` (line 35): `    async def run(self, session: CallSession, **kwargs) -> list[AgentAction]:`
+- `note_taker.py` (line 36): `    async def run(self, session: CallSession, **kwargs) -> list[AgentAction]:`
+- `orchestrator.py` (line 24): `    async def run(self, session: CallSession, flag: AgentAction | None = None, **kwargs) -> str:`
+- `context_ingestion.py` (line 32): `    async def run(self, session: CallSession, brief_text: str = "") -> ProjectContext:`
+- `call_guide_drafter.py` (line 32): `    async def run(self, session: CallSession, **kwargs) -> CallGuide:`
+- `post_call_summarizer.py` (line 23): `    async def run(self, session: CallSession, **kwargs) -> dict:`
+
+Each becomes, e.g.:
+
 ```python
     @op()
-    async def run(self, session: CallSession, **kwargs) -> AgentAction:
+    async def run(self, session: CallSession, **kwargs) -> AgentAction | None:
 ```
 
-> Note: some agents may define helper methods like `get_latest_notes` / `get_latest_coverage` / `get_latest_takeaways`. Do **not** decorate those — only `run`.
+> Do **not** decorate the agents' `get_latest_notes` / `get_latest_coverage` / `seed_processed` helpers — only `run`.
 
-- [ ] **Step 3: Write a smoke test that the decorated agents still import and expose `run`**
+- [ ] **Step 3: Import smoke (all agents construct + expose `run`)**
 
-Create `expert_call_agent/tests/test_tracing_smoke.py`:
-
-```python
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
+Run (from `expert_call_agent/`):
+```bash
+WEAVE_DISABLED=1 python3 -c "
 from agents.qa_agent import QAAgent
 from agents.followup_agent import FollowUpAgent
 from agents.note_taker import NoteTakerAgent
 from agents.orchestrator import OrchestratorAgent
-
-
-def test_agents_still_have_callable_run():
-    for cls in (QAAgent, FollowUpAgent, NoteTakerAgent, OrchestratorAgent):
-        assert hasattr(cls, "run")
-        assert callable(cls.run)
+from agents.context_ingestion import ContextIngestionAgent
+from agents.call_guide_drafter import CallGuideDrafterAgent
+from agents.post_call_summarizer import PostCallSummarizerAgent
+for c in (QAAgent, FollowUpAgent, NoteTakerAgent, OrchestratorAgent, ContextIngestionAgent, CallGuideDrafterAgent, PostCallSummarizerAgent):
+    assert callable(getattr(c, 'run')), c
+print('agents import OK')
+"
 ```
+Expected: prints `agents import OK`.
 
-- [ ] **Step 4: Run the smoke test**
+> If a class name above differs from the actual class name in its file, use the real class name (open the file's `class …(BaseAgent)` line). The import paths (module names) are correct.
 
-Run (from `expert_call_agent/`):
-```bash
-WEAVE_DISABLED=1 pytest tests/test_tracing_smoke.py -v
-```
-Expected: PASS (1 passed). Confirms the decorators didn't break class definitions.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add expert_call_agent/agents/ expert_call_agent/tests/test_tracing_smoke.py
-git commit -m "feat: trace agent.run and _call_model with Weave"
+git add expert_call_agent/agents/
+git commit -m "feat: trace agent.run + _call_model/_call_model_text with Weave
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 6: Eval scorers (pure, TDD)
+## Task 6: Eval scorers (pure functions)
 
 **Files:**
 - Create: `expert_call_agent/evals/__init__.py`
 - Create: `expert_call_agent/evals/scorers.py`
-- Test: `expert_call_agent/tests/test_scorers.py`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create the package marker**
 
-Create `expert_call_agent/evals/__init__.py` (empty).
+Create `expert_call_agent/evals/__init__.py` (empty file).
 
-Create `expert_call_agent/tests/test_scorers.py`:
+- [ ] **Step 2: Create the scorers**
 
-```python
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from evals.scorers import flag_type_match, produced_question
-
-
-def test_flag_type_match_correct():
-    assert flag_type_match("must_ask", {"flag_type": "must_ask"}) == {"correct": True}
-
-
-def test_flag_type_match_wrong():
-    assert flag_type_match("must_ask", {"flag_type": "nice_to_have"}) == {"correct": False}
-
-
-def test_flag_type_match_missing_output():
-    assert flag_type_match("must_ask", {}) == {"correct": False}
-    assert flag_type_match("must_ask", None) == {"correct": False}
-
-
-def test_produced_question_nonempty():
-    assert produced_question({"content": "What is the GPU count?"}) == {"nonempty": True}
-
-
-def test_produced_question_empty():
-    assert produced_question({"content": "   "}) == {"nonempty": False}
-    assert produced_question({}) == {"nonempty": False}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run (from `expert_call_agent/`):
-```bash
-pytest tests/test_scorers.py -v
-```
-Expected: FAIL — `ModuleNotFoundError: No module named 'evals.scorers'`.
-
-- [ ] **Step 3: Write the implementation**
-
-Create `expert_call_agent/evals/scorers.py`:
+Create `expert_call_agent/evals/scorers.py` with exactly:
 
 ```python
 """Pure scoring functions for Weave evaluations.
 
 Each scorer takes dataset columns (by name) plus the model `output` dict and
-returns a dict of metrics. Kept free of I/O so they are unit-testable.
+returns a dict of metrics. No I/O, so they are trivially checkable.
 """
 
 
@@ -496,19 +449,33 @@ def produced_question(output: dict) -> dict:
     return {"nonempty": bool(content and content.strip())}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+> Note on `None`: when the QA agent stays silent it returns `None`, and the runner (Task 8) maps that to `{}` before scoring, so `flag_type_match` records `correct=False` and `produced_question` records `nonempty=False` rather than crashing.
 
-Run:
+- [ ] **Step 3: Inline smoke (no pytest)**
+
+Run (from `expert_call_agent/`):
 ```bash
-pytest tests/test_scorers.py -v
+python3 -c "
+from evals.scorers import flag_type_match, produced_question
+assert flag_type_match('must_ask', {'flag_type': 'must_ask'}) == {'correct': True}
+assert flag_type_match('must_ask', {'flag_type': 'nice_to_have'}) == {'correct': False}
+assert flag_type_match('must_ask', {}) == {'correct': False}
+assert flag_type_match('must_ask', None) == {'correct': False}
+assert produced_question({'content': 'What is the GPU count?'}) == {'nonempty': True}
+assert produced_question({'content': '   '}) == {'nonempty': False}
+assert produced_question({}) == {'nonempty': False}
+print('scorers OK')
+"
 ```
-Expected: PASS (5 passed).
+Expected: prints `scorers OK`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add expert_call_agent/evals/__init__.py expert_call_agent/evals/scorers.py expert_call_agent/tests/test_scorers.py
-git commit -m "feat: add Weave eval scorers with tests"
+git add expert_call_agent/evals/__init__.py expert_call_agent/evals/scorers.py
+git commit -m "feat: add Weave eval scorers (flag-type match, produced-question)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -518,9 +485,11 @@ git commit -m "feat: add Weave eval scorers with tests"
 **Files:**
 - Create: `expert_call_agent/evals/flag_dataset.json`
 
+Each row is one expert utterance plus the flag tier a good QA agent should produce next. Rows are seeded from the CoreWeave demo in `api/routes_call.py` (`DEMO_EXPERT_RESPONSES`), so the eval matches the demo's domain.
+
 - [ ] **Step 1: Create the dataset**
 
-Create `expert_call_agent/evals/flag_dataset.json`. Each row is one expert utterance plus the flag tier a good QA agent should produce next. (Rows are seeded from the CoreWeave demo in `api/routes_call.py`; expand later.)
+Create `expert_call_agent/evals/flag_dataset.json` with exactly:
 
 ```json
 [
@@ -547,13 +516,13 @@ Create `expert_call_agent/evals/flag_dataset.json`. Each row is one expert utter
 ]
 ```
 
-> Labels are a starting hypothesis (numbers/contradictions → `must_ask`; context/color → `should_ask`). The point of the eval is to measure how often the agent agrees; adjust labels as the team aligns on what "good" looks like.
+> Labels are a starting hypothesis (hard numbers/contradictions → `must_ask`; context/color → `should_ask`). The eval measures how often the agent agrees; adjust labels as the team aligns on "good."
 
 - [ ] **Step 2: Validate the JSON parses**
 
 Run (from `expert_call_agent/`):
 ```bash
-python -c "import json; rows=json.load(open('evals/flag_dataset.json')); print(len(rows), 'rows'); assert all('transcript' in r and 'expected_flag' in r for r in rows)"
+python3 -c "import json; rows=json.load(open('evals/flag_dataset.json')); print(len(rows), 'rows'); assert all('transcript' in r and 'expected_flag' in r for r in rows)"
 ```
 Expected: prints `5 rows`, no assertion error.
 
@@ -561,7 +530,9 @@ Expected: prints `5 rows`, no assertion error.
 
 ```bash
 git add expert_call_agent/evals/flag_dataset.json
-git commit -m "feat: add flag-quality eval dataset"
+git commit -m "feat: add QA flag-quality eval dataset (CoreWeave-seeded)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -571,17 +542,17 @@ git commit -m "feat: add flag-quality eval dataset"
 **Files:**
 - Create: `expert_call_agent/evals/run_flag_eval.py`
 
-> Requires `WANDB_API_KEY` set and working Vertex ADC, because it makes real Gemini/Claude calls. The QA agent uses Claude by default (see `config.AGENT_MODELS`).
+> Requires `WANDB_API_KEY` set and working Vertex ADC — it makes real Claude (QA agent) calls. QA uses Claude by default (`config.AGENT_MODELS`).
 
 - [ ] **Step 1: Write the runner**
 
-Create `expert_call_agent/evals/run_flag_eval.py`:
+Create `expert_call_agent/evals/run_flag_eval.py` with exactly:
 
 ```python
 """Run a Weave evaluation of the QA agent's flag quality.
 
 Usage (from expert_call_agent/):
-    WANDB_API_KEY=... python -m evals.run_flag_eval
+    WANDB_API_KEY=... python3 -m evals.run_flag_eval
 
 Logs traces + scores to the Weave project (WEAVE_PROJECT, default
 'http418-expert-call'). Open the URL printed by weave.init to inspect.
@@ -631,7 +602,8 @@ async def main() -> None:
     @weave.op()
     async def predict(transcript: str) -> dict:
         action = await qa.run(_build_session(transcript))
-        return action.model_dump()
+        # QA returns None when it chooses to stay silent; normalize for scorers.
+        return action.model_dump() if action is not None else {}
 
     evaluation = weave.Evaluation(
         dataset=_load_dataset(),
@@ -645,42 +617,37 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-- [ ] **Step 2: Syntax / import check (no network)**
+- [ ] **Step 2: Parse / import check (no network)**
 
 Run (from `expert_call_agent/`):
 ```bash
-WEAVE_DISABLED=1 python -c "import ast; ast.parse(open('evals/run_flag_eval.py').read()); print('parses OK')"
+WEAVE_DISABLED=1 python3 -c "import ast; ast.parse(open('evals/run_flag_eval.py').read()); print('parses OK')"
 ```
 Expected: prints `parses OK`.
 
-- [ ] **Step 3: Run the real evaluation**
-
-Ensure `WANDB_API_KEY` is set (get it from https://wandb.ai/authorize) and ADC works. Run (from `expert_call_agent/`):
-```bash
-WANDB_API_KEY=<your-key> python -m evals.run_flag_eval
-```
-Expected: Weave prints a project URL and an evaluation summary table with `flag_type_match.correct` and `produced_question.nonempty` means. Open the URL → confirm a `predict` trace per row, each with nested `qa_agent.run → _call_model → ClaudeClient.generate` spans.
-
-> If `weave.Evaluation.evaluate(predict)` rejects a bare function in the installed version, wrap it in a `weave.Model` subclass with an `@weave.op() async def predict(self, transcript)` method and pass the instance instead. See https://weave-docs.wandb.ai/guides/core-types/evaluations.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add expert_call_agent/evals/run_flag_eval.py
-git commit -m "feat: add Weave evaluation runner for QA flag quality"
+git commit -m "feat: add Weave evaluation runner for QA flag quality
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
+
+(The real run happens in Task 10, Step 3, once a key is set.)
+
+> **Version note:** if `evaluation.evaluate(predict)` rejects a bare op in the installed weave version, wrap it in a `weave.Model` subclass with an `@weave.op() async def predict(self, transcript)` and pass the instance. See https://weave-docs.wandb.ai/guides/core-types/evaluations.
 
 ---
 
-## Task 9: Document env vars + how to run
+## Task 9: Document env vars (`.env.example`)
 
 **Files:**
 - Create: `expert_call_agent/.env.example`
-- Modify: `expert_call_agent/requirements.txt` is already done; no change here.
 
 - [ ] **Step 1: Create `.env.example`**
 
-Create `expert_call_agent/.env.example`:
+Create `expert_call_agent/.env.example` with exactly:
 
 ```bash
 # Weave / W&B observability
@@ -688,50 +655,102 @@ Create `expert_call_agent/.env.example`:
 WANDB_API_KEY=
 # Weave project name (optional; defaults to http418-expert-call)
 WEAVE_PROJECT=http418-expert-call
-# Set to 1 to fully disable Weave tracing (app still runs)
+# Set to 1 to fully disable Weave tracing (app still runs). Use this if you have
+# no WANDB_API_KEY, so weave.op degrades to a pure no-op.
 WEAVE_DISABLED=
 ```
 
-- [ ] **Step 2: Verify .env is gitignored (it already is)**
+- [ ] **Step 2: Confirm `.env` is gitignored, `.env.example` is not**
 
-Run (from repo root):
+Run (from repo root `/home/kevin/EN-automation`):
 ```bash
-git check-ignore expert_call_agent/.env || echo "WARNING: .env not ignored"
+git check-ignore expert_call_agent/.env && echo ".env ignored (good)"
+git check-ignore expert_call_agent/.env.example && echo "WARN: .env.example IS ignored (should NOT be)" || echo ".env.example tracked (good)"
 ```
-Expected: prints the path `expert_call_agent/.env` (meaning it IS ignored). `.env.example` is **not** ignored and should be committed.
+Expected: `.env ignored (good)` then `.env.example tracked (good)`. If `.env` is **not** ignored, add `.env` to `.gitignore` and commit that too.
 
-- [ ] **Step 3: Run the full test suite**
-
-Run (from `expert_call_agent/`):
-```bash
-WEAVE_DISABLED=1 pytest -v
-```
-Expected: all tests pass (observability + scorers + tracing smoke).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add expert_call_agent/.env.example
-git commit -m "docs: document Weave env vars in .env.example"
+git commit -m "docs: document Weave env vars in .env.example
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Done / Demo checklist
+## Task 10: End-to-end verification (disabled smoke, then real run with key)
 
-- [ ] `WEAVE_DISABLED=1 pytest -v` → all green (works with no W&B account).
-- [ ] `WANDB_API_KEY=... python run.py`, run the demo flow (`run_demo` over the websocket / the demo button in `static/index.html`) → Weave UI shows a nested trace per transcript turn: parallel `qa/followup/note_taker/summarizer` runs → orchestrator selection → TTS.
-- [ ] `WANDB_API_KEY=... python -m evals.run_flag_eval` → Weave shows an evaluation with flag-quality scores.
-- [ ] Screenshot the trace tree + the eval table for the pitch/demo.
+**Files:** none (verification only).
+
+- [ ] **Step 1: Full no-op smoke (no key needed)**
+
+Run (from `expert_call_agent/`):
+```bash
+WEAVE_DISABLED=1 python3 -c "
+from api.app import create_app; create_app()
+from evals.scorers import flag_type_match, produced_question
+assert produced_question({'content':'x'})['nonempty'] is True
+print('disabled smoke OK')
+"
+```
+Expected: prints `disabled smoke OK` — proves the whole app + evals import and run with weave fully off.
+
+- [ ] **Step 2: Real tracing — run the demo and inspect the trace tree**
+
+Set the key, launch the server on **8899**, and drive the demo over the IAP tunnel:
+```bash
+cd /home/kevin/EN-automation/expert_call_agent
+lsof -ti :8899 2>/dev/null | xargs -r kill -9 2>/dev/null
+WANDB_API_KEY=<your-key> WEAVE_PROJECT=http418-expert-call nohup python3 -c "
+import uvicorn
+from api.app import create_app
+uvicorn.run(create_app(), host='0.0.0.0', port=8899)
+" > /tmp/weave_smoke.log 2>&1 &
+sleep 4
+grep -i "weave\|View at\|wandb" /tmp/weave_smoke.log | head
+```
+Then in the browser over the tunnel (`http://localhost:8899/`): **Use Sample Brief → Generate Call Guide → Run Demo Simulation**.
+
+Expected: the Weave URL is printed in `/tmp/weave_smoke.log` on startup; the Weave UI then shows, per expert turn, sibling trees `qa_agent.run`, `followup_agent.run`, `note_taker.run` (each nesting `_call_model → ClaudeClient.generate`) plus an `orchestrator.run → _call_model_text → ClaudeClient.generate` for the spoken turn, and `call_guide_drafter.run` / `context_ingestion.run` from the pre-call step. Stop the server when done (`lsof -ti :8899 | xargs -r kill -9`).
+
+- [ ] **Step 3: Real eval — run the evaluation**
+
+Run (from `expert_call_agent/`):
+```bash
+WANDB_API_KEY=<your-key> python3 -m evals.run_flag_eval
+```
+Expected: Weave prints a project URL and an evaluation summary with `flag_type_match.correct` and `produced_question.nonempty` means; the UI shows a `predict` trace per dataset row, each nesting `qa_agent.run → _call_model → ClaudeClient.generate`.
+
+- [ ] **Step 4: Capture demo assets + final commit (if any fixes were needed)**
+
+Screenshot the trace tree and the eval table for the pitch. If Steps 1–3 surfaced fixes:
+```bash
+git add -A
+git commit -m "fix: address Weave integration smoke findings
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+If no fixes were needed, skip the commit.
+
+---
+
+## Done / demo checklist
+
+- [ ] `WEAVE_DISABLED=1 python3 -c "from api.app import create_app; create_app()"` → builds with no W&B account.
+- [ ] `WANDB_API_KEY=… python3 …:8899` + Run Demo → Weave shows nested per-agent trace trees.
+- [ ] `WANDB_API_KEY=… python3 -m evals.run_flag_eval` → Weave shows an eval with flag-quality scores.
+- [ ] Trace-tree + eval-table screenshots saved for the pitch.
 
 ## How this maps to judging
 
-- **Agent Orchestration / Technical Execution:** the Weave trace tree literally visualizes multiple agents running in parallel and the deterministic queue selecting one — proof, not claims.
+- **Agent Orchestration / Technical Execution:** the Weave trees literally show the parallel `qa/followup/note_taker` agents and the orchestrator's spoken turn, each drilling into the exact Vertex call — proof, not claims.
 - **Best Use of Weave:** tracing *and* an evaluation harness with custom scorers (not just autologging).
-- **Sponsor Usage:** Weave (W&B) used meaningfully end-to-end, alongside Gemini/Claude on Vertex.
+- **Sponsor Usage:** Weave (W&B) used end-to-end alongside Claude/Gemini on Vertex.
 
-## Notes / follow-ups (out of scope for this plan)
+## Future evals (out of scope here — documented so they aren't lost)
 
-- Add an LLM-as-judge scorer for **note factuality** (compare `note_taker` output against the source utterance).
-- Add a `followup_agent` contradiction-recall eval (dataset of utterances that conflict with known data points).
-- Consider a `weave.Model` subclass so model config (provider/model name) is versioned in Weave.
+- **Follow-up contradiction recall:** dataset of expert utterances that conflict with `project_context.known_data_points`; scorer checks the Follow-up agent emitted a `contradiction` flag. (Directly measures the suppression work.)
+- **Note factuality (LLM-as-judge):** compare `note_taker` output against the source utterance.
+- **Per-turn unified trace:** if the "agents/clients only" trace ever feels too fragmented for the demo, add one `@op` root around the `process_entry` fan-out in `routes_call.py` so each expert turn is a single tree (deferred to avoid touching the live hot path).
