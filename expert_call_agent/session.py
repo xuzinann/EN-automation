@@ -1,11 +1,12 @@
 import asyncio
-from models import CallSession, TranscriptEntry, StructuredNote, AgentAction, CoverageStatus
+from models import CallSession, TranscriptEntry, StructuredNote, CoverageStatus
 
 
 class SessionManager:
     def __init__(self):
         self._sessions: dict[str, CallSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._active_calls: set[str] = set()
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:
@@ -37,20 +38,18 @@ class SessionManager:
         async with self._get_lock(session_id):
             self._sessions[session_id].notes.append(note)
 
-    async def add_action(self, session_id: str, action: AgentAction):
-        async with self._get_lock(session_id):
-            self._sessions[session_id].pending_actions.append(action)
-
-    async def pop_pending_actions(self, session_id: str) -> list[AgentAction]:
-        async with self._get_lock(session_id):
-            actions = list(self._sessions[session_id].pending_actions)
-            self._sessions[session_id].pending_actions.clear()
-            return actions
-
     async def update_coverage(self, session_id: str, coverage: list[CoverageStatus]):
         async with self._get_lock(session_id):
             self._sessions[session_id].coverage = coverage
 
-    async def update_takeaways(self, session_id: str, takeaways: list[str]):
+    async def acquire_call(self, session_id: str) -> bool:
+        """Claim the single live-call slot for a session. False if already active."""
         async with self._get_lock(session_id):
-            self._sessions[session_id].key_takeaways = takeaways
+            if session_id in self._active_calls:
+                return False
+            self._active_calls.add(session_id)
+            return True
+
+    async def release_call(self, session_id: str) -> None:
+        async with self._get_lock(session_id):
+            self._active_calls.discard(session_id)
