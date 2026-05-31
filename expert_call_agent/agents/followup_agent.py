@@ -41,6 +41,7 @@ class FollowUpAgent(BaseAgent):
             actions.append(AgentAction(
                 agent_name=self.name,
                 action_type="followup",
+                flag_type="probe",
                 content=fu.get("question", ""),
                 priority=fu.get("priority", 0.6),
                 metadata={"reason": fu.get("reason", "")},
@@ -50,8 +51,14 @@ class FollowUpAgent(BaseAgent):
             actions.append(AgentAction(
                 agent_name=self.name,
                 action_type="contradiction",
-                content=f"Contradiction: {contradiction.get('claim', '')} vs {contradiction.get('conflicts_with', '')}",
+                flag_type="contradiction",
+                content=(
+                    f"There may be an inconsistency: "
+                    f"{contradiction.get('claim', '')} vs "
+                    f"{contradiction.get('conflicts_with', '')}. Could you clarify?"
+                ),
                 priority=0.9,
+                metadata={"reason": "contradiction with known data"},
             ))
 
         self._latest_coverage = [
