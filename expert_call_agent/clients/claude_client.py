@@ -2,6 +2,7 @@ import httpx
 
 import config
 from clients.gcp_auth import get_auth
+from observability import op
 
 
 class ClaudeClient:
@@ -18,6 +19,7 @@ class ClaudeClient:
             "Content-Type": "application/json",
         }
 
+    @op()
     async def generate(
         self,
         messages: list[dict],

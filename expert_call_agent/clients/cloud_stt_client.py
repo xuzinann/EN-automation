@@ -4,6 +4,7 @@ import httpx
 
 import config
 from clients.gcp_auth import get_auth
+from observability import op
 
 
 class CloudSTTClient:
@@ -20,6 +21,7 @@ class CloudSTTClient:
     def __init__(self):
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
+    @op()
     async def transcribe(
         self,
         audio_bytes: bytes,

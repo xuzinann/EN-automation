@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 
 import config
+from observability import op
 
 
 class GeminiClient:
@@ -15,6 +16,7 @@ class GeminiClient:
             http_options=types.HttpOptions(timeout=config.GEMINI_HTTP_TIMEOUT_MS),
         )
 
+    @op()
     async def generate(
         self,
         model: str,
@@ -39,6 +41,7 @@ class GeminiClient:
         )
         return response.text
 
+    @op()
     async def generate_with_audio(
         self,
         model: str,

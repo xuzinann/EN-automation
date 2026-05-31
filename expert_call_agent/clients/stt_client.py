@@ -1,11 +1,13 @@
 import config
 from clients.gemini_client import GeminiClient
+from observability import op
 
 
 class STTClient:
     def __init__(self, gemini_client: GeminiClient):
         self.gemini = gemini_client
 
+    @op()
     async def transcribe(
         self,
         audio_bytes: bytes,
