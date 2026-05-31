@@ -110,7 +110,7 @@
       <span class="text-fallback">Trouble with audio?
         <input type="text" id="text-input" placeholder="Type an answer + Enter">
       </span>
-      <button class="leave" id="leave-btn">Leave call</button>
+      <button class="leave" id="leave-btn">End call</button>
     </div>
   </div>
 </div>
@@ -118,6 +118,11 @@
 <script>
 let ws = null, sessionId = null, micRecorder = null, micStream = null;
 let audioCtx = null, micActive = false, waveRaf = null;
+// Half-duplex turn-taking: the mic only captures during the expert's turn (the
+// "gate"). The gate opens when the agent finishes speaking and closes after a
+// trailing pause, so nothing the expert says while the agent is thinking or
+// speaking gets recorded as an answer to a not-yet-asked question.
+let gateOpen = false, gateFallbackTimer = null;
 
 // VAD (voice-activity detection) utterance endpointing — kept in sync with the
 // canonical implementation in index.html. One complete WebM blob per utterance:
@@ -129,9 +134,11 @@ let audioCtx = null, micActive = false, waveRaf = null;
 const _vp = new URLSearchParams(location.search);
 const _vn = (k, d) => { const v = parseFloat(_vp.get(k)); return Number.isFinite(v) ? v : d; };
 const VAD_POLL_MS = _vn('vadPoll', 50);             // energy sampling cadence
-const VAD_SILENCE_MS = _vn('vadSilence', 800);      // trailing silence that ends an utterance
+const VAD_SILENCE_MS = _vn('vadSilence', 2500);     // trailing silence that ENDS the expert's turn (tolerates brief pauses)
 const VAD_MIN_UTTERANCE_MS = _vn('vadMin', 400);    // drop blips shorter than this
-const VAD_MAX_UTTERANCE_MS = _vn('vadMax', 20000);  // force-cut a long monologue
+const VAD_MAX_UTTERANCE_MS = _vn('vadMax', 45000);  // force-cut a turn this long (Chirp sync recognize caps ~60s)
+const AGENT_TTS_FALLBACK_MS = _vn('ttsFallback', 6000); // open the mic this long after ai_turn even if no TTS audio arrives
+const RECONNECT_GATE_MS = _vn('reconnectGate', 4000);   // on a reconnect with no opening, open the mic after this wait
 // Adaptive endpointing: the speech threshold rides above the measured ambient noise
 // floor (threshold = floor * K, clamped) instead of a fixed level, so a quiet mic and
 // a noisy room both self-calibrate. The floor is seeded from the first VAD_CALIB_FRAMES
@@ -192,7 +199,15 @@ async function resolveSession(){
 function connectWS(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/api/call/ws/${sessionId}`);
-  ws.onopen = () => setState(micActive ? 'Listening…' : 'Connected');
+  ws.onopen = () => {
+    setState('Connected');
+    // Fresh call: the agent greets first and its ai_turn cancels this timer. Reconnect:
+    // no opening replays, so open the mic after a short wait to avoid a deadlock.
+    if (micActive){
+      if (gateFallbackTimer) clearTimeout(gateFallbackTimer);
+      gateFallbackTimer = setTimeout(() => { if (micActive && !gateOpen) openGate(); }, RECONNECT_GATE_MS);
+    }
+  };
   ws.onmessage = e => handleMsg(JSON.parse(e.data));
   ws.onclose = () => { setState('Disconnected'); stopMic(); };
 }
@@ -200,7 +215,7 @@ function connectWS(){
 function handleMsg(msg){
   switch (msg.type) {
     case 'transcript': addTranscript(msg.entry); break;
-    case 'ai_turn': setState('Speaking…'); break;
+    case 'ai_turn': onAgentTurn(); break;
     case 'tts_audio': playAudio(msg.data); break;
     case 'error': console.error('agent error:', msg.message); break;
     // note, coverage_update, demo_progress, demo_complete: ignored on the expert page
@@ -220,7 +235,18 @@ function addTranscript(entry){
   if (!isAgent) setState('Thinking…');
 }
 
+// The agent is taking the floor: pre-empt any open expert turn (discard whatever
+// it captured while composing) and keep the mic locked until the reply finishes
+// — via audio.onended below, or this fallback if TTS never produces audio.
+function onAgentTurn(){
+  closeGate(false);
+  setState('Speaking…');
+  if (gateFallbackTimer) clearTimeout(gateFallbackTimer);
+  gateFallbackTimer = setTimeout(() => { if (micActive) openGate(); }, AGENT_TTS_FALLBACK_MS);
+}
+
 function playAudio(b64){
+  if (gateFallbackTimer){ clearTimeout(gateFallbackTimer); gateFallbackTimer = null; } // real audio → onended drives the gate
   setState('Speaking…');
   const audio = new Audio('data:audio/mp3;base64,' + b64);
   try {
@@ -233,8 +259,11 @@ function playAudio(b64){
     an.connect(audioCtx.destination);
     driveWave(an);
   } catch(e) { /* analyser optional; element still plays below */ }
-  audio.onended = () => { stopWave(); setState(micActive ? 'Listening…' : 'Idle'); };
-  audio.play().catch(err => console.log('audio blocked:', err));
+  // When the agent finishes speaking, hand the floor back: open the expert's turn.
+  const done = () => { stopWave(); if (micActive) openGate(); else setState('Your turn — type below'); };
+  audio.onended = done;
+  audio.onerror = done;
+  audio.play().catch(err => { console.log('audio blocked:', err); done(); });
 }
 
 function driveWave(an){
@@ -281,13 +310,15 @@ async function startMic(){
   micRecorder.ondataavailable = ev => {
     if (segmentValid && ev.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data);
   };
-  // After each cut, immediately begin the next segment (unless the mic is off).
-  micRecorder.onstop = () => { if (micActive && micRecorder) startSegment(); };
+  // Restart a fresh segment only while the expert's turn is still open (a
+  // max-length rotation). After a real turn-end the gate is closed first, so the
+  // recorder stays stopped until the next agent reply re-opens the gate.
+  micRecorder.onstop = () => { if (micActive && gateOpen && micRecorder) startSegment(); };
 
   noiseFloor = 0; calibFrames = 0; calibSum = 0; // re-calibrate ambient on each mic-on
-  startSegment();
-  vadInterval = setInterval(vadTick, VAD_POLL_MS);
-  setMic(true, 'Mic on — Shaun hears you');
+  micActive = true;
+  vadInterval = setInterval(vadTick, VAD_POLL_MS); // analyser calibrates now; the gate opens after Shaun's first turn
+  setMicGate(false);                               // muted until Shaun finishes greeting (openGate runs on audio end)
 }
 
 // Begin recording a fresh utterance segment and reset its VAD state.
@@ -301,19 +332,43 @@ function startSegment(){
   if (micRecorder && micRecorder.state === 'inactive') micRecorder.start(); // no timeslice → one blob at stop()
 }
 
-// End the current segment; ondataavailable decides whether to actually send it.
-function endSegment(reason){
+// Open the expert's turn: unlock the mic and start capturing a fresh utterance.
+function openGate(){
+  if (gateFallbackTimer){ clearTimeout(gateFallbackTimer); gateFallbackTimer = null; }
+  if (!micActive || gateOpen) return;
+  gateOpen = true;
+  setMicGate(true);
+  setState('Listening…');
+  startSegment();
+}
+
+// End the expert's turn and lock the mic until the next agent reply. send=true
+// finalizes + ships the utterance (a real trailing pause); send=false discards it
+// (the agent pre-empted). The blob goes out via ondataavailable when segmentValid.
+function closeGate(send){
+  if (gateFallbackTimer){ clearTimeout(gateFallbackTimer); gateFallbackTimer = null; }
+  if (!gateOpen) return;
+  gateOpen = false;
   const dur = performance.now() - segmentStart;
-  segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
-  console.log(`[VAD] ${segmentValid ? 'send' : 'drop'} (${reason})`,
+  segmentValid = send && sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
+  console.log(`[VAD] turn ${segmentValid ? 'send' : 'drop'} (${send ? 'pause' : 'preempt'})`,
               { ms: Math.round(dur), peakRms: +peakRms.toFixed(3),
                 thr: +curThreshold.toFixed(3), floor: +noiseFloor.toFixed(3), sawSpeech });
-  if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop → startSegment()
+  if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop (no restart: gate closed)
+  setMicGate(false);
+  if (segmentValid) setState('Thinking…');
+}
+
+// Max-length reached with no speech yet: recycle the recorder so the blob can't
+// grow unbounded, without ending the turn (the gate stays open).
+function rotateSegment(){
+  segmentValid = false;
+  if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // onstop → startSegment (gate still open)
 }
 
 // Poll mic energy; cut the segment on a trailing pause or the max-length cap.
 function vadTick(){
-  if (!micAnalyser || !micRecorder || micRecorder.state !== 'recording') return;
+  if (!micAnalyser) return;
   micAnalyser.getByteTimeDomainData(vadBuf);
   let sum = 0;
   for (let i = 0; i < vadBuf.length; i++){ const v = (vadBuf[i] - 128) / 128; sum += v * v; }
@@ -321,13 +376,17 @@ function vadTick(){
   const now = performance.now();
   if (rms > peakRms) peakRms = rms;
 
-  // Seed the ambient floor from the first frames of the mic session, then don't
-  // endpoint until calibration is done (the opening delay keeps this window silent).
+  // Seed the ambient floor from the first frames of the mic session (silent while
+  // we wait for Shaun's opening). Runs regardless of the gate so the threshold is
+  // ready by the time the expert's first turn opens.
   if (calibFrames < VAD_CALIB_FRAMES) {
     calibSum += rms;
     if (++calibFrames >= VAD_CALIB_FRAMES) noiseFloor = calibSum / VAD_CALIB_FRAMES;
     return;
   }
+
+  // Endpoint only during an open, recording turn (otherwise just keep calibrating above).
+  if (!gateOpen || !micRecorder || micRecorder.state !== 'recording') return;
 
   // Speech threshold rides above the measured ambient floor (clamped).
   curThreshold = Math.min(VAD_RMS_MAX, Math.max(VAD_RMS_MIN, noiseFloor * VAD_RMS_K));
@@ -342,13 +401,15 @@ function vadTick(){
   if (rms < noiseFloor) noiseFloor += (rms - noiseFloor) * 0.3;
   else if (!loud) noiseFloor += (rms - noiseFloor) * 0.05;
 
-  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment('pause');
-  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment('max-length');
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) closeGate(true);          // trailing pause → end the turn + send
+  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) { if (sawSpeech) closeGate(true); else rotateSegment(); }
 }
 
 // Tear down the mic + VAD without touching the WS or the state line.
 function stopMic(){
   micActive = false; // set first so onstop won't restart a segment
+  gateOpen = false;
+  if (gateFallbackTimer){ clearTimeout(gateFallbackTimer); gateFallbackTimer = null; }
   if (vadInterval){ clearInterval(vadInterval); vadInterval = null; }
   if (micRecorder && micRecorder.state !== 'inactive'){
     // Flush a final in-progress utterance if it contained speech.
@@ -369,8 +430,17 @@ function setMic(on, text){
   $('mic-text').textContent = text;
 }
 
-function leaveCall(){
+// Reflect the turn gate in the mic indicator (the hardware stays on the whole call).
+function setMicGate(open){
+  $('mic').className = 'mic' + (open ? '' : ' off');
+  $('mic-text').textContent = open ? 'Mic on — your turn' : 'Muted — Shaun is speaking';
+}
+
+async function leaveCall(){
   stopMic();
+  // End the call backend-side so the operator console (a read-only monitor) is
+  // notified and its "Generate Summary" control unlocks — no operator action needed.
+  if (sessionId) { try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e){} }
   if (ws) { ws.close(); ws = null; }
   setState('Call ended');
   $('text-input').disabled = true;
