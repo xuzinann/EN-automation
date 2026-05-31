@@ -8,9 +8,11 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config
 from clients.gemini_client import GeminiClient
 from clients.claude_client import ClaudeClient
 from clients.stt_client import STTClient
+from clients.cloud_stt_client import CloudSTTClient
 from clients.tts_client import TTSClient
 from session import SessionManager
 from api.routes_precall import router as precall_router
@@ -22,12 +24,15 @@ from api.routes_postcall import router as postcall_router
 async def lifespan(app: FastAPI):
     app.state.gemini = GeminiClient()
     app.state.claude = ClaudeClient()
-    app.state.stt = STTClient(app.state.gemini)
+    app.state.stt = (
+        CloudSTTClient() if config.STT_PROVIDER == "chirp" else STTClient(app.state.gemini)
+    )
     app.state.tts = TTSClient()
     app.state.sessions = SessionManager()
     yield
     await app.state.claude.close()
     await app.state.tts.close()
+    await app.state.stt.close()
 
 
 def create_app() -> FastAPI:

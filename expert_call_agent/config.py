@@ -14,6 +14,15 @@ TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 TTS_VOICE = "en-US-Studio-O"
 TTS_LANGUAGE = "en-US"
 
+# Speech-to-Text provider. "chirp" = Google Cloud Speech-to-Text v2 Chirp 2 (a
+# purpose-built ASR model — lower latency, better accuracy than an LLM). "gemini"
+# = transcribe via Gemini Flash (the LLM fallback). chirp_2 is REGIONAL, so
+# SPEECH_LOCATION must be one of: us-central1 | europe-west4 | asia-southeast1.
+STT_PROVIDER = "chirp"
+SPEECH_LOCATION = "us-central1"
+SPEECH_MODEL = "chirp_2"
+SPEECH_LANGUAGE_CODES = ["en-US"]
+
 # Per-agent (provider, model). BaseAgent._call_model / _call_model_text branch on
 # provider, and each agent's model is honored per call (ClaudeClient.generate(model=…)
 # / GeminiClient.generate(model=…)), so a swap here needs no other code edits.

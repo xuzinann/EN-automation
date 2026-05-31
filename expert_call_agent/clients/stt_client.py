@@ -17,3 +17,7 @@ class STTClient:
             mime_type=mime_type,
             prompt="Transcribe this audio exactly. Return only the transcription, no commentary.",
         )
+
+    async def close(self):
+        # No own resources (shares the GeminiClient); present for interface parity.
+        pass
