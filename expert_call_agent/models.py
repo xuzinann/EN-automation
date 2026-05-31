@@ -76,8 +76,9 @@ class CoverageStatus(BaseModel):
 class AgentAction(BaseModel):
     agent_name: str
     action_type: str
+    flag_type: str = "should_ask"  # contradiction | must_ask | probe | should_ask | nice_to_have
     content: str
-    priority: float = 0.5
+    priority: float = 0.5  # retained for future same-tier tiebreak
     metadata: dict = {}
 
 

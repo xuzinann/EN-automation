@@ -20,9 +20,11 @@ AGENT_MODELS = {
     "qa_agent": ("claude", CLAUDE_MODEL),
     "followup_agent": ("gemini", GEMINI_PRO_MODEL),
     "note_taker": ("gemini", GEMINI_FLASH_MODEL),
-    "summarizer": ("claude", CLAUDE_MODEL),
     "post_call_summarizer": ("claude", CLAUDE_MODEL),
 }
 
 ORCHESTRATOR_TICK_SECONDS = 5
 MAX_TRANSCRIPT_CONTEXT = 20
+
+# Live-call flag priority: lower index = higher priority. FIFO breaks ties.
+FLAG_TIER_ORDER = ["contradiction", "must_ask", "probe", "should_ask", "nice_to_have"]
