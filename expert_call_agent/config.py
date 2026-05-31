@@ -28,3 +28,8 @@ MAX_TRANSCRIPT_CONTEXT = 20
 
 # Live-call flag priority: lower index = higher priority. FIFO breaks ties.
 FLAG_TIER_ORDER = ["contradiction", "must_ask", "probe", "should_ask", "nice_to_have"]
+
+# Max times each flag type may be surfaced in a single live call (None/absent = unlimited).
+# Keeps the AI from harping on the same concern: it raises a contradiction or
+# follow-up at most this many times, then moves on even if the issue recurs.
+LIVE_FLAG_CAPS = {"contradiction": 5, "probe": 5}
