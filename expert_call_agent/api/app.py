@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
+from observability import init_weave
 from clients.gemini_client import GeminiClient
 from clients.claude_client import ClaudeClient
 from clients.stt_client import STTClient
@@ -23,6 +24,7 @@ from api.routes_postcall import router as postcall_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_weave()  # starts Weave tracing if enabled (WANDB_API_KEY set, weave installed)
     app.state.gemini = GeminiClient()
     app.state.claude = ClaudeClient()
     app.state.stt = (
