@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction
+from observability import op
 import config
 
 _VALID_FLAGS = {"must_ask", "should_ask", "nice_to_have"}
@@ -25,6 +26,7 @@ class QAAgent(BaseAgent):
         "No markdown fences or commentary."
     )
 
+    @op()
     async def run(self, session: CallSession, **kwargs) -> AgentAction | None:
         guide_json = session.call_guide.model_dump_json() if session.call_guide else "{}"
         recent = session.transcript[-config.MAX_TRANSCRIPT_CONTEXT:]

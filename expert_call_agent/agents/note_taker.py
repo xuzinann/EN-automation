@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction, StructuredNote
+from observability import op
 import config
 
 
@@ -34,6 +35,7 @@ class NoteTakerAgent(BaseAgent):
         """Skip note extraction for entries already in the transcript (reconnect)."""
         self._last_processed = count
 
+    @op()
     async def run(self, session: CallSession, **kwargs) -> list[AgentAction]:
         processed_through = len(session.transcript)
         new_entries = session.transcript[self._last_processed:processed_through]

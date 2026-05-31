@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction
+from observability import op
 import config
 
 _INTENT = {
@@ -22,6 +23,7 @@ class OrchestratorAgent(BaseAgent):
         "questions, lists, or markdown. Return only the words to speak."
     )
 
+    @op()
     async def run(self, session: CallSession, flag: AgentAction | None = None, **kwargs) -> str:
         if flag is None:
             return ""

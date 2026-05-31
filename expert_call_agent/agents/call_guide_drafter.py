@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, CallGuide
+from observability import op
 
 
 class CallGuideDrafterAgent(BaseAgent):
@@ -29,6 +30,7 @@ class CallGuideDrafterAgent(BaseAgent):
         "Return ONLY the JSON object, no markdown fences or commentary."
     )
 
+    @op()
     async def run(self, session: CallSession, **kwargs) -> CallGuide:
         context_json = session.project_context.model_dump_json() if session.project_context else "{}"
         prompt = f"Create an interview guide based on this project context:\n\n{context_json}"

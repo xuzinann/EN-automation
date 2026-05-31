@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction, CoverageStatus
+from observability import op
 import config
 
 
@@ -33,6 +34,7 @@ class FollowUpAgent(BaseAgent):
         "No markdown fences or commentary."
     )
 
+    @op()
     async def run(self, session: CallSession, **kwargs) -> list[AgentAction]:
         guide_json = session.call_guide.model_dump_json() if session.call_guide else "{}"
         context_json = session.project_context.model_dump_json() if session.project_context else "{}"

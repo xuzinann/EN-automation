@@ -6,6 +6,7 @@ import config
 from clients.gemini_client import GeminiClient
 from clients.claude_client import ClaudeClient
 from models import CallSession
+from observability import op
 
 
 class BaseAgent(ABC):
@@ -21,6 +22,7 @@ class BaseAgent(ABC):
         self.model_provider = provider
         self.model_name = model
 
+    @op()
     async def _call_model(self, user_prompt: str) -> str:
         if self.model_provider == "gemini":
             return await self.gemini.generate(
@@ -39,6 +41,7 @@ class BaseAgent(ABC):
                 **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
             )
 
+    @op()
     async def _call_model_text(self, user_prompt: str) -> str:
         """Plain-text (non-JSON) model call, for agents that speak prose.
 

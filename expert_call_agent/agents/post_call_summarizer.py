@@ -2,6 +2,7 @@ import json
 import re
 from agents.base_agent import BaseAgent
 from models import CallSession
+from observability import op
 
 
 class PostCallSummarizerAgent(BaseAgent):
@@ -20,6 +21,7 @@ class PostCallSummarizerAgent(BaseAgent):
         "Use actual numbers and quotes from the call. Output nothing outside the two tagged blocks."
     )
 
+    @op()
     async def run(self, session: CallSession, **kwargs) -> dict:
         transcript = "\n".join(f"[{e.speaker}] {e.text}" for e in session.transcript)
         notes = json.dumps([n.model_dump() for n in session.notes])

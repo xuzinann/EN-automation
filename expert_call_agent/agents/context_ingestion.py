@@ -1,5 +1,6 @@
 from agents.base_agent import BaseAgent
 from models import CallSession, ProjectContext
+from observability import op
 
 
 class ContextIngestionAgent(BaseAgent):
@@ -29,6 +30,7 @@ class ContextIngestionAgent(BaseAgent):
         "Return ONLY the JSON object, no markdown fences or commentary."
     )
 
+    @op()
     async def run(self, session: CallSession, brief_text: str = "") -> ProjectContext:
         prompt = f"Analyze this PE due diligence project brief and extract structured context:\n\n{brief_text}"
         response = await self._call_model(prompt)
