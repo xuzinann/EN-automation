@@ -34,7 +34,28 @@ class BaseAgent(ABC):
                 messages=[{"role": "user", "content": user_prompt}],
                 system=self.system_prompt,
                 temperature=self.temperature,
+                model=self.model_name,
             )
+
+    async def _call_model_text(self, user_prompt: str) -> str:
+        """Plain-text (non-JSON) model call, for agents that speak prose.
+
+        Mirrors _call_model but never requests JSON mode, so the chosen provider
+        returns a natural spoken turn rather than a structured object.
+        """
+        if self.model_provider == "gemini":
+            return await self.gemini.generate(
+                model=self.model_name,
+                prompt=user_prompt,
+                system_instruction=self.system_prompt,
+                temperature=self.temperature,
+            )
+        return await self.claude.generate(
+            messages=[{"role": "user", "content": user_prompt}],
+            system=self.system_prompt,
+            temperature=self.temperature,
+            model=self.model_name,
+        )
 
     def _parse_json(self, text: str) -> dict | list:
         cleaned = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())

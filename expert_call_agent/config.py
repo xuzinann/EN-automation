@@ -6,6 +6,7 @@ CLAUDE_REGION = "us-east5"
 GEMINI_PRO_MODEL = "gemini-2.5-pro"
 GEMINI_FLASH_MODEL = "gemini-2.5-flash"
 CLAUDE_MODEL = "claude-sonnet-4@20250514"
+CLAUDE_HAIKU_MODEL = "claude-haiku-4-5@20251001"
 
 ANTHROPIC_VERSION = "vertex-2023-10-16"
 
@@ -13,18 +14,17 @@ TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 TTS_VOICE = "en-US-Studio-O"
 TTS_LANGUAGE = "en-US"
 
+# Per-agent (provider, model). BaseAgent._call_model / _call_model_text branch on
+# provider, and each agent's model is honored per call (ClaudeClient.generate(model=…)
+# / GeminiClient.generate(model=…)), so a swap here needs no other code edits.
+# All live + structured agents now run on Claude; only STT still uses Gemini Flash.
 AGENT_MODELS = {
     "context_ingestion": ("claude", CLAUDE_MODEL),
     "call_guide_drafter": ("claude", CLAUDE_MODEL),
-    "orchestrator": ("gemini", GEMINI_FLASH_MODEL),
-    # Kept on Claude Sonnet for question quality. This line is the single lever
-    # for the live-call latency tradeoff (#9): switching to
-    # ("gemini", GEMINI_FLASH_MODEL) is a one-line change with no other code
-    # edits — BaseAgent._call_model branches on provider, and _safe_parse_json
-    # makes the no-JSON-mode path degrade to "stay silent" instead of crashing.
+    "orchestrator": ("claude", CLAUDE_MODEL),
     "qa_agent": ("claude", CLAUDE_MODEL),
-    "followup_agent": ("gemini", GEMINI_PRO_MODEL),
-    "note_taker": ("gemini", GEMINI_FLASH_MODEL),
+    "followup_agent": ("claude", CLAUDE_MODEL),
+    "note_taker": ("claude", CLAUDE_HAIKU_MODEL),
     "post_call_summarizer": ("claude", CLAUDE_MODEL),
 }
 

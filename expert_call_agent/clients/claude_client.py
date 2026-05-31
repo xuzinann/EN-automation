@@ -24,11 +24,12 @@ class ClaudeClient:
         system: str | None = None,
         max_tokens: int = 4096,
         temperature: float | None = None,
+        model: str | None = None,
     ) -> str:
         url = (
             f"https://{self.region}-aiplatform.googleapis.com/v1/"
             f"projects/{self.project}/locations/{self.region}/"
-            f"publishers/anthropic/models/{self.model}:rawPredict"
+            f"publishers/anthropic/models/{model or self.model}:rawPredict"
         )
         body = {
             "anthropic_version": config.ANTHROPIC_VERSION,
