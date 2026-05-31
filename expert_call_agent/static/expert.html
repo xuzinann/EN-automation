@@ -22,7 +22,12 @@
   /* call screen */
   #call{flex:1;display:none;flex-direction:column;min-height:0}
   .stage{flex:0 0 54%;position:relative;display:flex;flex-direction:column;align-items:center;
-    justify-content:center;background:radial-gradient(circle at 50% 42%,#16203f,#080b16)}
+    justify-content:center;background:radial-gradient(circle at 50% 42%,#16203f,#080b16);
+    transition:box-shadow .4s ease}
+  /* mic-live: a green glow rings the stage while the expert's mic is open (their turn) */
+  .stage.mic-live{box-shadow:inset 0 0 0 3px rgba(34,181,115,.85),inset 0 0 70px rgba(34,181,115,.30);
+    animation:stageGlow 1.8s ease-in-out infinite}
+  @keyframes stageGlow{50%{box-shadow:inset 0 0 0 3px rgba(34,181,115,.45),inset 0 0 32px rgba(34,181,115,.15)}}
   .topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;
     align-items:center;padding:14px 18px;color:#9fb3d1;font-size:12px;z-index:5}
   .live{display:flex;align-items:center;gap:6px;color:#ff6b6b;font-weight:700;letter-spacing:.6px}
@@ -43,6 +48,17 @@
   .stage .orb{position:relative;z-index:4}
   .agentname{margin-top:20px;color:#eaf1ff;font-size:16px;font-weight:600;z-index:4}
   .state{margin-top:5px;color:#7fa6d8;font-size:12px;z-index:4;letter-spacing:.4px;min-height:16px}
+
+  /* prominent mic-state cue pill under the orb */
+  .mic-cue{margin-top:14px;z-index:4;display:inline-flex;align-items:center;gap:7px;
+    padding:8px 18px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.3px;
+    min-height:34px;transition:background .25s,color .25s,box-shadow .25s}
+  .mic-cue:empty{display:none}
+  .mic-cue.muted{background:rgba(148,163,184,.16);color:#9fb3d1}
+  .mic-cue.live{background:rgba(34,181,115,.18);color:#5ef0a8;
+    box-shadow:0 0 0 1px rgba(34,181,115,.55),0 0 20px rgba(34,181,115,.40);
+    animation:cuePulse 1.5s ease-in-out infinite}
+  @keyframes cuePulse{50%{box-shadow:0 0 0 1px rgba(34,181,115,.30),0 0 9px rgba(34,181,115,.18)}}
 
   .scriptpane{flex:1;background:#f5f7fb;display:flex;flex-direction:column;min-height:0}
   .scripthead{padding:10px 18px;font-size:11px;text-transform:uppercase;letter-spacing:1.2px;
@@ -98,6 +114,7 @@
       <div class="orb"></div>
       <div class="agentname">Shaun</div>
       <div class="state" id="state">Connecting…</div>
+      <div class="mic-cue muted" id="mic-cue"></div>
     </div>
 
     <div class="scriptpane">
@@ -175,7 +192,7 @@ async function joinCall(){
   $('ready').style.display = 'none';
   $('call').style.display = 'flex';
   setState('Connecting…');
-  try { await startMic(); } catch(e) { setMic(false, 'No mic — type answers below'); }
+  try { await startMic(); } catch(e) { setMic(false, 'No mic — type answers below'); showTextCue(); }
   const sid = await resolveSession();
   if (!sid) { setState('Waiting for the call to start…'); return; }
   sessionId = sid;
@@ -422,6 +439,8 @@ function stopMic(){
   vadBuf = null;
   sawSpeech = false;
   setMic(false, 'Mic off');
+  document.querySelector('.stage').classList.remove('mic-live'); // drop the glow on teardown
+  const cue = $('mic-cue'); cue.className = 'mic-cue muted'; cue.textContent = '';
 }
 
 function setMic(on, text){
@@ -430,10 +449,22 @@ function setMic(on, text){
   $('mic-text').textContent = text;
 }
 
-// Reflect the turn gate in the mic indicator (the hardware stays on the whole call).
+// Reflect the turn gate everywhere: the footer indicator, the prominent stage cue
+// pill, and the green glow ringing the stage (the hardware stays on all call).
 function setMicGate(open){
   $('mic').className = 'mic' + (open ? '' : ' off');
   $('mic-text').textContent = open ? 'Mic on — your turn' : 'Muted — Shaun is speaking';
+  const cue = $('mic-cue');
+  cue.className = 'mic-cue ' + (open ? 'live' : 'muted');
+  cue.textContent = open ? '🎤 Your turn — speak' : '🔇 Shaun is speaking';
+  document.querySelector('.stage').classList.toggle('mic-live', open);
+}
+
+// Text-only fallback (no mic): a static cue telling the expert to type their answers.
+function showTextCue(){
+  const cue = $('mic-cue');
+  cue.className = 'mic-cue muted';
+  cue.textContent = '⌨️ Type your answer below';
 }
 
 async function leaveCall(){
