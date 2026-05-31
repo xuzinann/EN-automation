@@ -142,7 +142,7 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 - **Why:** PE engagements have dense context; this agent builds the knowledge base all other agents reference
 
 #### Call Guide Drafter Agent
-- **Model:** Claude (structured reasoning)
+- **Model:** Claude Sonnet (structured reasoning)
 - **Input:** Structured context from ingestion
 - **Output:** Role-specific interview guide with:
   - Opening questions
@@ -155,6 +155,12 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 The live call is coordinated by a **deterministic priority queue**, not an LLM. Agents below
 either *flag* items into the queue (QA, Follow-up) or run passively (Note-taker). The
 Orchestrator consumes the single chosen flag and speaks.
+
+**All live-loop agents (QA, Follow-up, Note-taker, Orchestrator) run on Claude Haiku 4.5
+with a 512-token output cap** (`config.LIVE_AGENT_MAX_TOKENS`). They emit short,
+low-temperature turns — one spoken question, a few structured flags, a few notes — where
+Haiku is plenty, and this keeps the live critical path fast. The pre/post-call agents stay
+on Claude Sonnet (off the live path, quality-sensitive).
 
 #### Deterministic Priority Queue (not an agent)
 - **Type:** Plain code — no model call
@@ -172,14 +178,14 @@ Orchestrator consumes the single chosen flag and speaks.
   each action is retained for this.
 
 #### QA Agent (flagger)
-- **Model:** Claude (nuanced questioning)
+- **Model:** Claude Haiku 4.5 (fast structured flagging; ≤512 output tokens)
 - **Role:** Propose the best next interview question
 - **Input:** Call guide + real-time transcript + context
 - **Output:** A single flag — the next question, typed `must_ask` / `should_ask` / `nice_to_have`
   from the guide. Does not select or speak; the queue decides whether it runs.
 
 #### Follow-Up Agent (flagger)
-- **Model:** Claude Sonnet (nuanced contradiction/probe detection)
+- **Model:** Claude Haiku 4.5 (fast contradiction/probe detection; ≤512 output tokens)
 - **Role:** Coverage monitor and probe/contradiction generator
 - **Input:** Real-time transcript + call guide checklist + known data points
 - **Output:**
@@ -188,7 +194,7 @@ Orchestrator consumes the single chosen flag and speaks.
   - Coverage status (% of guide topics addressed) — surfaced to the UI, **not** a queued flag
 
 #### Note Taker Agent (passive)
-- **Model:** Claude Haiku (fast, cheap structured output)
+- **Model:** Claude Haiku 4.5 (fast, cheap structured output; ≤512 output tokens)
 - **Role:** Real-time documentation — runs alongside but **never competes in the queue** (it does
   not talk to the expert)
 - **Input:** Real-time transcript
@@ -199,7 +205,7 @@ Orchestrator consumes the single chosen flag and speaks.
   - Quotes worth preserving
 
 #### Orchestrator / Responder
-- **Model:** Claude Sonnet (natural live-speech composition)
+- **Model:** Claude Haiku 4.5 (fast live-speech composition; ≤512 output tokens)
 - **Role:** Composer and voice of the call. Receives the single flag chosen by the deterministic
   queue and turns it into a natural, conversational utterance.
 - **Responsibilities:**
@@ -212,7 +218,7 @@ Orchestrator consumes the single chosen flag and speaks.
 ### Post-Call Agent
 
 #### Summarizer (merged)
-- **Model:** Claude (synthesis, judgment)
+- **Model:** Claude Sonnet (synthesis, judgment)
 - **Role:** Single post-call synthesis pass — absorbs both the former live Key-Takeaway
   Summarizer and the former Post-Call Summarizer.
 - **Input:** Full transcript + accumulated notes + project context
@@ -229,14 +235,14 @@ Orchestrator consumes the single chosen flag and speaks.
 
 | Agent | Model | Rationale |
 |-------|-------|-----------|
-| Context Ingestion | Claude Sonnet | Long context, deep comprehension |
-| Call Guide Drafter | Claude | Structured reasoning, consulting domain |
-| QA Agent (flagger) | Claude | Nuanced, adaptive questioning |
-| Follow-Up Agent (flagger) | Claude Sonnet | Nuanced contradiction/probe detection |
-| Note Taker (passive) | Claude Haiku | Fast, cheap structured extraction |
-| Orchestrator / Responder | Claude Sonnet | Natural live-speech composition |
+| Context Ingestion | Claude Sonnet | Long context, deep comprehension (pre-call) |
+| Call Guide Drafter | Claude Sonnet | Structured reasoning, consulting domain (pre-call) |
+| QA Agent (flagger) | Claude Haiku 4.5 (≤512 tok) | Fast, adaptive questioning on the live path |
+| Follow-Up Agent (flagger) | Claude Haiku 4.5 (≤512 tok) | Fast contradiction/probe detection on the live path |
+| Note Taker (passive) | Claude Haiku 4.5 (≤512 tok) | Fast, cheap structured extraction |
+| Orchestrator / Responder | Claude Haiku 4.5 (≤512 tok) | Fast live-speech composition |
 | Priority Queue | Deterministic code | Inspectable, testable, zero added latency |
-| Post-call Summarizer | Claude | Synthesis, judgment |
+| Post-call Summarizer | Claude Sonnet | Synthesis, judgment (post-call) |
 | STT | Cloud Speech-to-Text v2 (Chirp 2) | Purpose-built ASR; client-side VAD; Gemini Flash fallback |
 | TTS | Google Cloud TTS API (`en-US-Studio-O`) | Studio-quality voice ("Shaun") |
 
@@ -308,10 +314,10 @@ The following APIs need to be enabled in the GCP project for full functionality:
 
 | Risk | Mitigation |
 |------|------------|
-| Latency in the live call | Chirp 2 (fast ASR) + client-side VAD remove fixed windows; flaggers run in parallel; queue selection is instant (no model call); per-call agent timeouts cap stalls |
+| Latency in the live call | Chirp 2 (fast ASR) + client-side VAD remove fixed windows; live-loop agents run on Claude Haiku 4.5 with a 512-token output cap; flaggers run in parallel; queue selection is instant (no model call); per-call agent timeouts cap stalls |
 | Audio output not allowlisted | Use Cloud TTS API (confirmed working) |
 | Autonomous TTS speaks something off | Responder phrases only the queue-chosen flag; recent transcript provided for context; monitoring UI retained |
-| Token costs with multiple agents | Note-taker on Claude Haiku (cheap); per-type flag caps + queue dedup bound the number of live LLM turns |
+| Token costs with multiple agents | All live-loop agents on Claude Haiku 4.5 (cheap) with a 512-token output cap; per-type flag caps + queue dedup bound the number of live LLM turns |
 | Expert says something contradictory | Follow-Up Agent emits tier-1 contradiction flags that pre-empt other questions |
 | Deterministic queue too rigid | Numeric-score / LLM tiebreak designed-in as a future extension (retained `priority` float) |
 | Call guide misses key areas | Post-call summarizer identifies remaining gaps for follow-up calls |
