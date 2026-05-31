@@ -2,9 +2,11 @@
 
 ## Overview
 
-A multi-agent system for PE consulting expert calls that handles: project context ingestion, call guide drafting, and live expert interview with real-time analysis.
+A multi-agent system for PE consulting expert calls that handles: project context ingestion, call guide drafting, and a fully autonomous live expert interview with real-time analysis, followed by a post-call synthesis deliverable.
 
 **Target use case:** PE client wants to understand a target company — headcount (N) by role, operational structure, market positioning, etc. — via expert network calls.
+
+**Live-call model:** during the call, the system runs **autonomously**. Specialist agents *flag* issues tied to their role; a **deterministic priority queue** (plain code) selects the single highest-priority flag; an Orchestrator/Responder agent composes the utterance and speaks it to the expert via TTS. Selection is deterministic; only flagging and phrasing use LLMs.
 
 ---
 
@@ -100,38 +102,37 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 └──────────────────────────────┬──────────────────────────────┘
                                ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                    PHASE 2: LIVE CALL                       │
+│              PHASE 2: LIVE CALL (autonomous)                │
 │                                                             │
-│  Expert Audio ──→ Gemini Flash (STT) ──→ Orchestrator      │
-│                                              ↓              │
-│                    ┌─────────────────────────────────┐      │
-│                    │    Parallel Agent Pool           │      │
-│                    │                                  │      │
-│                    │  ┌──────────────┐  ┌──────────┐ │      │
-│                    │  │  QA Agent    │  │ Follow-up│ │      │
-│                    │  │  (drive the  │  │  Agent   │ │      │
-│                    │  │   interview) │  │ (monitor │ │      │
-│                    │  └──────────────┘  │  coverage│ │      │
-│                    │                     │  & probe)│ │      │
-│                    │  ┌──────────────┐  └──────────┘ │      │
-│                    │  │ Note Taker   │               │      │
-│                    │  │ (structured  │  ┌──────────┐ │      │
-│                    │  │  real-time   │  │ Key      │ │      │
-│                    │  │  notes)      │  │ Takeaway │ │      │
-│                    │  └──────────────┘  │Summarizer│ │      │
-│                    │                     └──────────┘ │      │
-│                    └─────────────────────────────────┘      │
+│  Expert Audio ──→ Gemini Flash (STT) ──→ transcript        │
+│                            ↓                                │
+│         ┌──────────── parallel fan-out ───────────┐         │
+│         │  QA Agent        → flag: next question   │         │
+│         │  Follow-up Agent → flags: contradiction, │         │
+│         │                    probe (+ coverage)    │         │
+│         │  Note-taker      → structured notes      │         │
+│         │                    (passive, not queued) │         │
+│         └────────────────────┬─────────────────────┘         │
 │                              ↓                              │
-│                    Orchestrator → TTS → Audio to caller     │
+│         DETERMINISTIC PRIORITY QUEUE (plain code)           │
+│         order by fixed tier · FIFO within tier · dedup     │
+│                              ↓                              │
+│         pop top flag → Orchestrator/Responder (Flash)      │
+│         (compose natural utterance)                        │
+│                              ↓                              │
+│                    TTS → audio auto-played to expert        │
 └──────────────────────────────┬──────────────────────────────┘
                                ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                    PHASE 3: POST-CALL                       │
 │                                                             │
-│  Note Taker output ──→ Final Summary Agent                  │
-│  Key Takeaways     ──→ (structured deliverable,             │
-│  Call transcript        findings vs. gaps,                  │
-│                         next steps)                         │
+│  Transcript + Notes + Context ──→ Summarizer Agent          │
+│                                   (single pass):            │
+│                                   • key takeaways           │
+│                                     (findings, surprises,   │
+│                                      remaining gaps)        │
+│                                   • full markdown           │
+│                                     deliverable             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -158,50 +159,76 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 
 ### Live Call Agents
 
-#### Orchestrator (Moderator)
-- **Model:** Gemini 2.5 Flash (low latency)
-- **Role:** Traffic controller — decides which agent output to surface, manages turn-taking
-- **Responsibilities:**
-  - Routes transcribed audio to all agents simultaneously
-  - Selects next question/action from QA or Follow-up agent
-  - Prevents agents from talking over each other
-  - Monitors call time and pacing
+The live call is coordinated by a **deterministic priority queue**, not an LLM. Agents below
+either *flag* items into the queue (QA, Follow-up) or run passively (Note-taker). The
+Orchestrator consumes the single chosen flag and speaks.
 
-#### QA Agent
+#### Deterministic Priority Queue (not an agent)
+- **Type:** Plain code — no model call
+- **Role:** Collect all flags emitted in a turn, order them by a **fixed tier hierarchy**, break
+  ties FIFO (oldest unaddressed first), drop flags whose question was already asked, and pop the
+  single top flag.
+- **Tier hierarchy (highest → lowest):**
+  1. Contradiction (Follow-up)
+  2. Must-ask question (QA)
+  3. Follow-up probe (Follow-up)
+  4. Should-ask question (QA)
+  5. Nice-to-have question (QA)
+- **Future extension:** numeric scores within a tier — when two flags genuinely compete (same
+  tier), sort by score or hand the tie to the Orchestrator LLM to decide. The `priority` float on
+  each action is retained for this.
+
+#### QA Agent (flagger)
 - **Model:** Claude (nuanced questioning)
-- **Role:** Primary interviewer — drives the conversation
+- **Role:** Propose the best next interview question
 - **Input:** Call guide + real-time transcript + context
-- **Output:** Next question to ask, adapted based on expert's responses
-- **Behavior:** Follows the call guide but adapts dynamically
+- **Output:** A single flag — the next question, typed `must_ask` / `should_ask` / `nice_to_have`
+  from the guide. Does not select or speak; the queue decides whether it runs.
 
-#### Follow-Up Agent
+#### Follow-Up Agent (flagger)
 - **Model:** Gemini 2.5 Pro (reasoning + speed)
-- **Role:** Coverage monitor and probe generator
-- **Input:** Real-time transcript + call guide checklist
+- **Role:** Coverage monitor and probe/contradiction generator
+- **Input:** Real-time transcript + call guide checklist + known data points
 - **Output:**
-  - Coverage tracker (% of guide topics addressed)
-  - Follow-up probes when expert gives vague or incomplete answers
-  - Flags contradictions with prior data
-- **Behavior:** Suggests follow-ups to the Orchestrator, does not speak directly
+  - `contradiction` flags (tier 1) when the expert conflicts with prior data
+  - `probe` flags (tier 3) when an answer is vague or incomplete
+  - Coverage status (% of guide topics addressed) — surfaced to the UI, **not** a queued flag
 
-#### Note Taker Agent
+#### Note Taker Agent (passive)
 - **Model:** Gemini 2.5 Flash (fast, structured output)
-- **Role:** Real-time documentation
+- **Role:** Real-time documentation — runs alongside but **never competes in the queue** (it does
+  not talk to the expert)
 - **Input:** Real-time transcript
 - **Output:** Structured notes — timestamped, categorized by topic:
-  - Data points (with confidence: stated vs. estimated vs. implied)
+  - Data points (with confidence: stated vs. estimated vs. inferred)
   - Org structure findings
   - N-sizing data per role
   - Quotes worth preserving
 
-#### Key Takeaway Summarizer
-- **Model:** Claude (synthesis)
-- **Role:** Running summary of critical insights
-- **Input:** Real-time transcript + Note Taker output
-- **Output:**
-  - Top findings so far (updated every few minutes)
-  - Surprises / deviations from hypothesis
-  - Remaining gaps
+#### Orchestrator / Responder
+- **Model:** Gemini 2.5 Flash (low latency for live speech)
+- **Role:** Composer and voice of the call. Receives the single flag chosen by the deterministic
+  queue and turns it into a natural, conversational utterance.
+- **Responsibilities:**
+  - Phrase the chosen flag smoothly (transitions, acknowledgments)
+  - Submit the utterance to the expert via TTS (fully autonomous)
+  - Stay silent when the queue is empty (let the expert continue)
+- **Note:** Selection of *what* to ask is deterministic (the queue). The Orchestrator decides
+  only *how* to say it.
+
+### Post-Call Agent
+
+#### Summarizer (merged)
+- **Model:** Claude (synthesis, judgment)
+- **Role:** Single post-call synthesis pass — absorbs both the former live Key-Takeaway
+  Summarizer and the former Post-Call Summarizer.
+- **Input:** Full transcript + accumulated notes + project context
+- **Output (one pass):**
+  - **Structured key takeaways:** top findings, surprises / deviations from hypotheses,
+    remaining gaps
+  - **Full markdown deliverable:** executive summary; findings by category; data points
+    confirmed (table); gaps remaining; contradictions & red flags; expert credibility
+    assessment; recommended follow-up actions
 
 ---
 
@@ -211,11 +238,12 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 |-------|-------|-----------|
 | Context Ingestion | Claude / Gemini 2.5 Pro | Long context, deep comprehension |
 | Call Guide Drafter | Claude | Structured reasoning, consulting domain |
-| Orchestrator | Gemini 2.5 Flash | Low latency, routing decisions |
-| QA Agent | Claude | Nuanced, adaptive questioning |
-| Follow-Up Agent | Gemini 2.5 Pro | Reasoning + faster than Claude |
-| Note Taker | Gemini 2.5 Flash | Speed, structured extraction |
-| Key Takeaway Summarizer | Claude | Synthesis, judgment |
+| QA Agent (flagger) | Claude | Nuanced, adaptive questioning |
+| Follow-Up Agent (flagger) | Gemini 2.5 Pro | Reasoning + faster than Claude |
+| Note Taker (passive) | Gemini 2.5 Flash | Speed, structured extraction |
+| Orchestrator / Responder | Gemini 2.5 Flash | Low latency for live speech composition |
+| Priority Queue | Deterministic code | Inspectable, testable, zero added latency |
+| Post-call Summarizer | Claude | Synthesis, judgment |
 | STT | Gemini 2.5 Flash | Native audio input, fast |
 | TTS | Google Cloud TTS API | Only working TTS option |
 
@@ -223,22 +251,23 @@ POST https://texttospeech.googleapis.com/v1/text:synthesize
 
 ## 5. MVP Scope
 
-### Phase 1 MVP (Recommended starting point)
+### Phase 1 MVP
 1. **Context ingestion** — upload a project brief, get structured context
 2. **Call guide generation** — auto-generate interview guide from context
 3. **Live transcription** — Gemini STT during the call
-4. **Single QA agent** — suggest next questions based on transcript + guide
-5. **Post-call summary** — structured notes + key takeaways from transcript
+4. **Flaggers + deterministic queue** — QA and Follow-up agents flag items; the queue selects
+5. **Autonomous responder** — Orchestrator composes the chosen flag and speaks it via TTS
+6. **Real-time Note Taker** — passive structured notes during the call
+7. **Post-call summary** — merged summarizer produces takeaways + full markdown deliverable
 
 ### Phase 2
-6. Add Follow-Up Agent for coverage monitoring
-7. Add real-time Note Taker
-8. Add TTS for voice output (automated caller)
+8. Numeric-score / LLM tiebreak for competing same-tier flags
+9. Richer coverage analytics and pacing controls
 
 ### Phase 3
-9. Full multi-agent orchestration during live calls
 10. Integration with telephony (Twilio / equivalent)
-11. Cross-call learning (insights from prior calls inform new ones)
+11. Persistence (sessions, transcripts, deliverables)
+12. Cross-call learning (insights from prior calls inform new ones)
 
 ---
 
@@ -264,6 +293,9 @@ headers = {
 **Project ID:** `gp-ct-sbox-sat-gcp0bg-darksoft`
 **Region:** `us-central1`
 
+> Note: Anthropic-on-Vertex calls use the `:rawPredict` endpoint (see `clients/claude_client.py`),
+> not `:generateContent`. Claude runs in region `us-east5`.
+
 ---
 
 ## 7. APIs to Enable
@@ -283,8 +315,10 @@ The following APIs need to be enabled in the GCP project for full functionality:
 
 | Risk | Mitigation |
 |------|------------|
-| Latency in multi-agent live call | Use Flash for latency-sensitive agents; run agents in parallel, not sequentially |
+| Latency in the live call | Use Flash for STT, the Responder, and Note-taker; run flaggers in parallel; queue selection is instant (no model call) |
 | Audio output not allowlisted | Use Cloud TTS API (confirmed working) |
-| Token costs with multiple agents | Use Flash/Lite for simple tasks; reserve Pro/Claude for reasoning |
-| Expert says something contradictory | Follow-Up Agent specifically monitors for contradictions |
-| Call guide misses key areas | Post-call Completeness Critic identifies gaps for follow-up calls |
+| Autonomous TTS speaks something off | Responder phrases only the queue-chosen flag; recent transcript provided for context; monitoring UI retained |
+| Token costs with multiple agents | Use Flash for flagging/voice; reserve Claude for QA and post-call synthesis |
+| Expert says something contradictory | Follow-Up Agent emits tier-1 contradiction flags that pre-empt other questions |
+| Deterministic queue too rigid | Numeric-score / LLM tiebreak designed-in as a future extension (retained `priority` float) |
+| Call guide misses key areas | Post-call summarizer identifies remaining gaps for follow-up calls |
