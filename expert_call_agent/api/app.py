@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -45,6 +46,12 @@ def create_app() -> FastAPI:
     base_dir = Path(__file__).resolve().parent.parent
     app.mount("/sample_data", StaticFiles(directory=str(base_dir / "sample_data")), name="sample_data")
     app.mount("/context", StaticFiles(directory=str(base_dir / "context")), name="context")
+
+    async def expert_page():
+        return FileResponse(str(base_dir / "static" / "expert.html"))
+
+    app.add_api_route("/expert", expert_page, methods=["GET"], include_in_schema=False)
+
     app.mount("/", StaticFiles(directory=str(base_dir / "static"), html=True), name="static")
 
     return app
