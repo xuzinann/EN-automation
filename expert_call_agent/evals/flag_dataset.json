@@ -1,0 +1,22 @@
+[
+  {
+    "transcript": "[expert] When I left we had roughly 40,000 H100s deployed across six data centers, with another 25,000 on order.",
+    "expected_flag": "must_ask"
+  },
+  {
+    "transcript": "[expert] On paper you see 60 percent gross margin, but real margin on deployed capacity was closer to 42 to 45 percent.",
+    "expected_flag": "must_ask"
+  },
+  {
+    "transcript": "[expert] Microsoft alone was roughly 35 percent of revenue, and the top five customers combined were about 62 percent.",
+    "expected_flag": "must_ask"
+  },
+  {
+    "transcript": "[expert] Thanks for having me. I was the VP of Infrastructure at CoreWeave for about two years.",
+    "expected_flag": "should_ask"
+  },
+  {
+    "transcript": "[expert] Power is becoming the real bottleneck, not GPUs. We paid 4.5 to 6 cents per kilowatt hour on our best PPAs.",
+    "expected_flag": "should_ask"
+  }
+]
