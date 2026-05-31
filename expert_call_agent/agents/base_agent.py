@@ -11,6 +11,7 @@ from models import CallSession
 class BaseAgent(ABC):
     name: str
     system_prompt: str
+    temperature: float | None = None  # subclasses override; None = provider default
 
     def __init__(self, gemini_client: GeminiClient, claude_client: ClaudeClient):
         self.gemini = gemini_client
@@ -26,17 +27,32 @@ class BaseAgent(ABC):
                 prompt=user_prompt,
                 system_instruction=self.system_prompt,
                 response_mime_type="application/json",
+                temperature=self.temperature,
             )
         else:
             return await self.claude.generate(
                 messages=[{"role": "user", "content": user_prompt}],
                 system=self.system_prompt,
+                temperature=self.temperature,
             )
 
     def _parse_json(self, text: str) -> dict | list:
         cleaned = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
         cleaned = re.sub(r"\n?```\s*$", "", cleaned)
         return json.loads(cleaned)
+
+    def _safe_parse_json(self, text: str | None, default):
+        """Parse model JSON, returning `default` on empty/None/malformed output.
+
+        Live-call agents must degrade gracefully: a single bad turn should fall
+        back to a safe default, never raise and stall the call.
+        """
+        if not text:
+            return default
+        try:
+            return self._parse_json(text)
+        except ValueError:  # json.JSONDecodeError is a subclass of ValueError
+            return default
 
     @abstractmethod
     async def run(self, session: CallSession, **kwargs):
