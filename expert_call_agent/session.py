@@ -8,6 +8,7 @@ class SessionManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._active_calls: set[str] = set()
         self._live_session_id: str | None = None
+        self._monitors: dict[str, set] = {}
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:
@@ -71,3 +72,26 @@ class SessionManager:
     async def release_call(self, session_id: str) -> None:
         async with self._get_lock(session_id):
             self._active_calls.discard(session_id)
+
+    def register_monitor(self, session_id: str, ws) -> None:
+        """Add a read-only monitor socket for a session (does not take the call lock)."""
+        self._monitors.setdefault(session_id, set()).add(ws)
+
+    def unregister_monitor(self, session_id: str, ws) -> None:
+        conns = self._monitors.get(session_id)
+        if conns is not None:
+            conns.discard(ws)
+            if not conns:
+                self._monitors.pop(session_id, None)
+
+    async def broadcast_to_monitors(self, session_id: str, message: dict) -> None:
+        """Best-effort fan-out of one outbound message to every monitor socket.
+
+        Iterates a snapshot so a socket dropping mid-broadcast can't corrupt the
+        set; any socket that errors on send is unregistered.
+        """
+        for ws in list(self._monitors.get(session_id, ())):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                self.unregister_monitor(session_id, ws)

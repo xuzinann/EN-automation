@@ -14,6 +14,10 @@ import config
 
 router = APIRouter()
 
+# Frames the read-only monitor channel does not need: audio is heavy and useless
+# to the operator panels, and demo progress is test-path noise.
+_MONITOR_SKIP_TYPES = {"tts_audio", "demo_progress", "demo_complete"}
+
 DEMO_EXPERT_RESPONSES = [
     "Thanks for having me. I was the VP of Infrastructure at CoreWeave for about two years before I moved on last October. I reported directly to the CTO, Brian Venturo, and was responsible for our data center buildout and GPU cluster operations.",
     "So in terms of total GPU fleet — when I left we had roughly 40,000 H100s deployed across six operational data centers, with another 25,000 on order for the new facilities in Dallas and Chicago. We also still had about 14,000 A100s running legacy workloads that customers hadn't migrated yet. The B200 rollout was just beginning — we had early access units in our Weehawken facility for internal testing.",
@@ -38,15 +42,16 @@ async def _run_agent(coro):
     return await asyncio.wait_for(coro, timeout=config.AGENT_TIMEOUT_SECONDS)
 
 
-async def speak(ws, app, session_id: str, utterance: str, *, agent_name: str,
+async def speak(emit, app, session_id: str, utterance: str, *, agent_name: str,
                 flag_type: str, rationale: str) -> None:
     """Emit one agent turn: ai_turn event, interviewer transcript entry, TTS audio.
 
     Shared by the reactive turn loop (process_entry) and the proactive opening so
-    both produce an identical client-facing sequence.
+    both produce an identical client-facing sequence. `emit` fans each message out
+    to the expert socket and any read-only monitors.
     """
     sessions = app.state.sessions
-    await ws.send_json({
+    await emit({
         "type": "ai_turn",
         "question": utterance,
         "agent": agent_name,
@@ -56,11 +61,11 @@ async def speak(ws, app, session_id: str, utterance: str, *, agent_name: str,
 
     ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
     await sessions.add_transcript_entry(session_id, ai_entry)
-    await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
+    await emit({"type": "transcript", "entry": ai_entry.model_dump()})
 
     try:
         audio_bytes = await app.state.tts.synthesize(utterance)
-        await ws.send_json({
+        await emit({
             "type": "tts_audio",
             "data": base64.b64encode(audio_bytes).decode(),
         })
@@ -121,6 +126,48 @@ async def active_call(request: Request):
     return {"session_id": sessions.get_live_session_id()}
 
 
+@router.websocket("/monitor/{session_id}")
+async def monitor_websocket(ws: WebSocket, session_id: str):
+    """Read-only live view of a call for the operator console.
+
+    Subscribes to the same outbound stream the expert receives (minus audio and
+    demo frames) without taking the single-call lock — so it never blocks the
+    live expert and any number of monitors may attach. Replays current state on
+    connect so a monitor joining mid-call (or after a refresh) sees the history.
+    """
+    await ws.accept()
+    sessions = ws.app.state.sessions
+
+    try:
+        session = await sessions.get_session(session_id)
+    except KeyError:
+        await ws.send_json({"type": "error", "message": "Session not found"})
+        await ws.close()
+        return
+
+    for entry in session.transcript:
+        await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
+    for note in session.notes:
+        await ws.send_json({"type": "note", "note": note.model_dump()})
+    if session.coverage:
+        await ws.send_json({
+            "type": "coverage_update",
+            "coverage": [c.model_dump() for c in session.coverage],
+        })
+
+    sessions.register_monitor(session_id, ws)
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            # Read-only: ignore any inbound payloads from the monitor.
+    except WebSocketDisconnect:
+        pass
+    finally:
+        sessions.unregister_monitor(session_id, ws)
+
+
 @router.websocket("/ws/{session_id}")
 async def call_websocket(ws: WebSocket, session_id: str):
     await ws.accept()
@@ -145,6 +192,12 @@ async def call_websocket(ws: WebSocket, session_id: str):
         await ws.close()
         return
 
+    async def emit(message: dict):
+        """Send to the live expert, then fan out to any read-only monitors."""
+        await ws.send_json(message)
+        if message.get("type") not in _MONITOR_SKIP_TYPES:
+            await sessions.broadcast_to_monitors(session_id, message)
+
     try:
         qa = QAAgent(gemini, claude)
         followup = FollowUpAgent(gemini, claude)
@@ -165,7 +218,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
             if opening:
                 await asyncio.sleep(config.LIVE_OPENING_DELAY_SECONDS)
                 await speak(
-                    ws, app, session_id, opening,
+                    emit, app, session_id, opening,
                     agent_name="orchestrator",
                     flag_type="opening",
                     rationale="Opening the call",
@@ -174,7 +227,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
         async def process_entry(entry: TranscriptEntry):
             await sessions.add_transcript_entry(session_id, entry)
             session = await sessions.get_session(session_id)
-            await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
+            await emit({"type": "transcript", "entry": entry.model_dump()})
 
             qa_result, fu_result, nt_result = await asyncio.gather(
                 _run_agent(qa.run(session)),
@@ -185,20 +238,20 @@ async def call_websocket(ws: WebSocket, session_id: str):
 
             # Note-taker (passive) — record notes, never queued.
             if isinstance(nt_result, Exception):
-                await ws.send_json({"type": "error", "message": _err(nt_result)})
+                await emit({"type": "error", "message": _err(nt_result)})
             else:
                 for note in note_taker.get_latest_notes():
                     await sessions.add_note(session_id, note)
-                    await ws.send_json({"type": "note", "note": note.model_dump()})
+                    await emit({"type": "note", "note": note.model_dump()})
 
             # Coverage status from the Follow-up agent.
             if isinstance(fu_result, Exception):
-                await ws.send_json({"type": "error", "message": _err(fu_result)})
+                await emit({"type": "error", "message": _err(fu_result)})
             else:
                 coverage = followup.get_latest_coverage()
                 if coverage:
                     await sessions.update_coverage(session_id, coverage)
-                    await ws.send_json({
+                    await emit({
                         "type": "coverage_update",
                         "coverage": [c.model_dump() for c in coverage],
                     })
@@ -208,7 +261,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
             if isinstance(qa_result, AgentAction):
                 flags.append(qa_result)
             elif isinstance(qa_result, Exception):
-                await ws.send_json({"type": "error", "message": _err(qa_result)})
+                await emit({"type": "error", "message": _err(qa_result)})
             if isinstance(fu_result, list):
                 flags.extend(fu_result)
 
@@ -223,14 +276,14 @@ async def call_websocket(ws: WebSocket, session_id: str):
             try:
                 utterance = await _run_agent(orchestrator.run(session, flag=selected))
             except Exception as e:
-                await ws.send_json({"type": "error", "message": _err(e)})
+                await emit({"type": "error", "message": _err(e)})
                 return
             if not utterance or not utterance.strip():
                 return
             utterance = utterance.strip()
 
             await speak(
-                ws, app, session_id, utterance,
+                emit, app, session_id, utterance,
                 agent_name=selected.agent_name,
                 flag_type=selected.flag_type,
                 rationale=selected.metadata.get("rationale")
@@ -253,7 +306,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
                         entry = TranscriptEntry(speaker="expert", text=text)
                         await process_entry(entry)
                 except Exception as e:
-                    await ws.send_json({"type": "error", "message": f"STT: {_err(e)}"})
+                    await emit({"type": "error", "message": f"STT: {_err(e)}"})
 
             elif "text" in raw:
                 data = json.loads(raw["text"])
@@ -267,7 +320,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
 
                 elif data.get("type") == "run_demo":
                     for i, expert_text in enumerate(DEMO_EXPERT_RESPONSES):
-                        await ws.send_json({
+                        await emit({
                             "type": "demo_progress",
                             "current": i + 1,
                             "total": len(DEMO_EXPERT_RESPONSES),
@@ -276,7 +329,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
                         await process_entry(entry)
                         await asyncio.sleep(1)
 
-                    await ws.send_json({"type": "demo_complete"})
+                    await emit({"type": "demo_complete"})
 
     except WebSocketDisconnect:
         pass

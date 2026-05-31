@@ -277,6 +277,7 @@
 <script>
 let sessionId = null;
 let ws = null;
+let monitorWs = null;
 let currentContext = null;
 let currentGuide = null;
 let mediaRecorder = null;
@@ -632,8 +633,14 @@ async function startExpertCall() {
   try {
     await fetch(`/api/call/start/${sessionId}`, { method: 'POST' });
   } catch(e) { console.error(e); }
-  // The expert page is the sole live client — we only flip the session to live
-  // and hand off; we do NOT open a monitor WebSocket here (single-connection).
+  // The expert page is the sole live (driving) client. The operator console
+  // attaches a separate read-only monitor channel so these panels update live;
+  // it never takes the single-connection lock and never sends audio/text.
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  monitorWs = new WebSocket(`${proto}//${location.host}/api/call/monitor/${sessionId}`);
+  monitorWs.onmessage = (event) => handleWSMessage(JSON.parse(event.data));
+  monitorWs.onclose = () => console.log('Monitor channel closed');
+  document.getElementById('btn-end-call').disabled = false;
   window.open(`/expert?session=${sessionId}`, '_blank');
 }
 
@@ -941,6 +948,7 @@ async function endCall() {
     ws = null;
   }
   try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e) {}
+  if (monitorWs) { monitorWs.close(); monitorWs = null; }
   document.getElementById('btn-end-call').disabled = true;
   document.getElementById('btn-mic').disabled = true;
   document.getElementById('btn-start-call').disabled = false;
