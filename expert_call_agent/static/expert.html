@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expert Call — Live</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:#070a14;overflow:hidden}
+  .app{height:100vh;display:flex;flex-direction:column}
+
+  /* ready screen */
+  #ready{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 40%,#16203f,#070a14);color:#eaf1ff;text-align:center;padding:24px}
+  #ready h1{font-size:22px;font-weight:600;margin:26px 0 8px}
+  #ready p{color:#9fb3d1;font-size:14px;margin-bottom:24px;max-width:430px;line-height:1.5}
+  #join-btn{background:#2e7d32;color:#fff;border:none;border-radius:10px;padding:13px 30px;font-size:15px;font-weight:600;cursor:pointer}
+  #join-btn:hover{background:#1b5e20}
+  #join-note{margin-top:16px;font-size:12px;color:#6f86ad;min-height:16px}
+
+  /* call screen */
+  #call{flex:1;display:none;flex-direction:column;min-height:0}
+  .stage{flex:0 0 54%;position:relative;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;background:radial-gradient(circle at 50% 42%,#16203f,#080b16)}
+  .topbar{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;
+    align-items:center;padding:14px 18px;color:#9fb3d1;font-size:12px;z-index:5}
+  .live{display:flex;align-items:center;gap:6px;color:#ff6b6b;font-weight:700;letter-spacing:.6px}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:#ff5252;box-shadow:0 0 8px #ff5252;animation:blink 1.4s infinite}
+  @keyframes blink{50%{opacity:.25}}
+
+  .wavewrap{position:absolute;left:0;right:0;top:48%;transform:translateY(-50%);height:170px;overflow:hidden;z-index:1}
+  .wavewrap svg{width:220%;height:100%;display:block}
+  .wave-amp{transform-box:fill-box;transform-origin:50% 50%;transform:scaleY(.4);transition:transform .09s ease-out}
+  .wave-scroll{animation:wavescroll 1.9s linear infinite}
+  @keyframes wavescroll{to{transform:translateX(-336px)}}
+
+  .orb{width:88px;height:88px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#9af7ea,#4aa3ff 55%,#6a5cff);
+    box-shadow:0 0 40px rgba(90,160,255,.8),inset 0 0 14px rgba(154,247,234,.85);
+    animation:breathe 3.2s ease-in-out infinite}
+  @keyframes breathe{50%{transform:scale(1.06)}}
+  .stage .orb{position:relative;z-index:4}
+  .agentname{margin-top:20px;color:#eaf1ff;font-size:16px;font-weight:600;z-index:4}
+  .state{margin-top:5px;color:#7fa6d8;font-size:12px;z-index:4;letter-spacing:.4px;min-height:16px}
+
+  .scriptpane{flex:1;background:#f5f7fb;display:flex;flex-direction:column;min-height:0}
+  .scripthead{padding:10px 18px;font-size:11px;text-transform:uppercase;letter-spacing:1.2px;
+    color:#64748b;background:#eef2f7;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center}
+  .scriptbody{padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;flex:1}
+  .msg{max-width:82%}
+  .msg .who{font-size:10px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
+  .msg.agent{align-self:flex-start}
+  .msg.agent .who{color:#2e7d32}
+  .msg.agent .bubble{background:#fff;color:#1a2740;border:1px solid #dbe3ef;
+    border-radius:12px 12px 12px 4px;padding:11px 14px;font-size:14px;line-height:1.55;box-shadow:0 1px 2px rgba(20,40,80,.05)}
+  .msg.expert{align-self:flex-end;text-align:right}
+  .msg.expert .who{color:#0d47a1}
+  .msg.expert .bubble{background:#e3eefc;color:#13233f;border-radius:12px 12px 4px 12px;
+    padding:9px 13px;font-size:13px;line-height:1.5;display:inline-block;text-align:left}
+
+  .controls{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 18px;
+    background:#eef2f7;border-top:1px solid #e2e8f0}
+  .mic{display:flex;align-items:center;gap:8px;color:#1b7a4b;font-size:12px;font-weight:600}
+  .mic.off{color:#94a3b8}
+  .micdot{width:9px;height:9px;border-radius:50%;background:#22b573;box-shadow:0 0 8px #22b573;animation:blink 1.6s infinite}
+  .mic.off .micdot{background:#cbd5e1;box-shadow:none;animation:none}
+  .text-fallback{font-size:11px;color:#94a3b8;flex:1;text-align:center}
+  .text-fallback input{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;margin-left:6px;width:240px}
+  .leave{background:#fde8ec;color:#c62828;border:1px solid #f3c2cb;border-radius:8px;
+    padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="ready">
+    <div class="orb"></div>
+    <h1>Shaun is ready to begin</h1>
+    <p>You're about to join a live call with our AI interviewer. Click below to enable your microphone — Shaun will greet you and lead the conversation.</p>
+    <button id="join-btn">Join call</button>
+    <div id="join-note"></div>
+  </div>
+
+  <div id="call">
+    <div class="stage">
+      <div class="topbar">
+        <span class="live"><span class="dot"></span>LIVE</span>
+        <span id="call-label">Expert Call</span>
+      </div>
+      <div class="wavewrap">
+        <svg viewBox="0 0 672 170" preserveAspectRatio="none">
+          <g class="wave-amp"><g class="wave-scroll" fill="none" stroke-linecap="round">
+            <path d="M-10 85 q 21 -38 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0" stroke="#7ec8ff" stroke-width="2.5" opacity="0.9"/>
+            <path d="M-10 85 q 21 38 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0 t 42 0" stroke="#9af7ea" stroke-width="2" opacity="0.4"/>
+          </g></g>
+        </svg>
+      </div>
+      <div class="orb"></div>
+      <div class="agentname">Shaun</div>
+      <div class="state" id="state">Connecting…</div>
+    </div>
+
+    <div class="scriptpane">
+      <div class="scripthead"><span>Transcript</span><span style="color:#94a3b8;">live</span></div>
+      <div class="scriptbody" id="transcript"></div>
+    </div>
+
+    <div class="controls">
+      <span class="mic off" id="mic"><span class="micdot"></span><span id="mic-text">Mic off</span></span>
+      <span class="text-fallback">Trouble with audio?
+        <input type="text" id="text-input" placeholder="Type an answer + Enter">
+      </span>
+      <button class="leave" id="leave-btn">Leave call</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let ws = null, sessionId = null, micRecorder = null, micStream = null;
+let audioCtx = null, micActive = false, waveRaf = null;
+
+// VAD (voice-activity detection) utterance endpointing — kept in sync with the
+// canonical implementation in index.html. One complete WebM blob per utterance:
+// MediaRecorder.start() with NO timeslice yields a single decodable blob on stop(),
+// and a poll loop cuts the segment after a trailing pause. (Fixed-interval chunking
+// produced headerless 2nd+ fragments the backend's STT couldn't decode — that bug
+// is the whole reason this endpointer exists.)
+const VAD_POLL_MS = 50;             // energy sampling cadence
+const VAD_SILENCE_RMS = 0.015;      // RMS at/under this counts as silence
+const VAD_SILENCE_MS = 800;         // trailing silence that ends an utterance
+const VAD_MIN_UTTERANCE_MS = 400;   // drop blips shorter than this
+const VAD_MAX_UTTERANCE_MS = 20000; // force-cut a long monologue
+let micAnalyser = null, vadInterval = null, vadBuf = null;
+let segmentStart = 0, lastVoice = 0, sawSpeech = false, segmentValid = false, peakRms = 0;
+
+const forcedSession = new URLSearchParams(location.search).get('session');
+const $ = id => document.getElementById(id);
+
+function setState(t){ $('state').textContent = t; }
+
+$('join-btn').addEventListener('click', joinCall);
+$('leave-btn').addEventListener('click', leaveCall);
+$('text-input').addEventListener('keydown', e => {
+  const v = e.target.value.trim();
+  if (e.key === 'Enter' && v && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'text_input', speaker: 'expert', text: v }));
+    e.target.value = '';
+  }
+});
+
+async function joinCall(){
+  // User gesture: unlock audio playback and request the mic.
+  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); await audioCtx.resume(); } catch(e) {}
+  $('ready').style.display = 'none';
+  $('call').style.display = 'flex';
+  setState('Connecting…');
+  try { await startMic(); } catch(e) { setMic(false, 'No mic — type answers below'); }
+  const sid = await resolveSession();
+  if (!sid) { setState('Waiting for the call to start…'); return; }
+  sessionId = sid;
+  connectWS();
+}
+
+async function resolveSession(){
+  if (forcedSession) return forcedSession;
+  for (let i = 0; i < 90; i++) {            // poll up to ~90s
+    try {
+      const r = await fetch('/api/call/active');
+      const d = await r.json();
+      if (d.session_id) return d.session_id;
+    } catch(e) {}
+    setState('Waiting for the call to start…');
+    await new Promise(res => setTimeout(res, 1000));
+  }
+  return null;
+}
+
+function connectWS(){
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/api/call/ws/${sessionId}`);
+  ws.onopen = () => setState(micActive ? 'Listening…' : 'Connected');
+  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+  ws.onclose = () => { setState('Disconnected'); stopMic(); };
+}
+
+function handleMsg(msg){
+  switch (msg.type) {
+    case 'transcript': addTranscript(msg.entry); break;
+    case 'ai_turn': setState('Speaking…'); break;
+    case 'tts_audio': playAudio(msg.data); break;
+    case 'error': console.error('agent error:', msg.message); break;
+    // note, coverage_update, demo_progress, demo_complete: ignored on the expert page
+  }
+}
+
+function addTranscript(entry){
+  if (entry.speaker !== 'interviewer' && entry.speaker !== 'expert') return;
+  const isAgent = entry.speaker === 'interviewer';
+  const div = document.createElement('div');
+  div.className = 'msg ' + (isAgent ? 'agent' : 'expert');
+  div.innerHTML = `<div class="who">${isAgent ? 'Shaun · Interviewer' : 'You'}</div><div class="bubble"></div>`;
+  div.querySelector('.bubble').textContent = entry.text;   // textContent = no HTML injection
+  const box = $('transcript');
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  if (!isAgent) setState('Thinking…');
+}
+
+function playAudio(b64){
+  setState('Speaking…');
+  const audio = new Audio('data:audio/mp3;base64,' + b64);
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const src = audioCtx.createMediaElementSource(audio);
+    const an = audioCtx.createAnalyser();
+    an.fftSize = 256;
+    src.connect(an);
+    an.connect(audioCtx.destination);
+    driveWave(an);
+  } catch(e) { /* analyser optional; element still plays below */ }
+  audio.onended = () => { stopWave(); setState(micActive ? 'Listening…' : 'Idle'); };
+  audio.play().catch(err => console.log('audio blocked:', err));
+}
+
+function driveWave(an){
+  if (waveRaf) cancelAnimationFrame(waveRaf);   // never stack loops across turns
+  const ampEl = document.querySelector('.wave-amp');
+  const data = new Uint8Array(an.frequencyBinCount);
+  (function tick(){
+    an.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;                 // 0..255
+    const scale = 0.35 + Math.min(1.4, avg / 110); // idle floor + reactive amplitude
+    if (ampEl) ampEl.style.transform = 'scaleY(' + scale.toFixed(3) + ')';
+    waveRaf = requestAnimationFrame(tick);
+  })();
+}
+
+function stopWave(){
+  if (waveRaf) { cancelAnimationFrame(waveRaf); waveRaf = null; }
+  const ampEl = document.querySelector('.wave-amp');
+  if (ampEl) ampEl.style.transform = 'scaleY(0.4)';
+}
+
+async function startMic(){
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+  });
+
+  // Mic-energy analyser drives the VAD endpointer. Reuse the shared audioCtx
+  // (already created + resumed by the Join gesture); the mic source feeds ONLY the
+  // analyser — never audioCtx.destination — so the expert never hears themselves.
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  const source = audioCtx.createMediaStreamSource(micStream);
+  micAnalyser = audioCtx.createAnalyser();
+  micAnalyser.fftSize = 256;
+  source.connect(micAnalyser);
+  vadBuf = new Uint8Array(micAnalyser.fftSize);
+
+  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  micRecorder = new MediaRecorder(micStream, { mimeType: mime });
+  // One segment per utterance: stop() flushes a single complete WebM blob;
+  // segmentValid gates whether the blob is worth sending.
+  micRecorder.ondataavailable = ev => {
+    if (segmentValid && ev.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data);
+  };
+  // After each cut, immediately begin the next segment (unless the mic is off).
+  micRecorder.onstop = () => { if (micActive && micRecorder) startSegment(); };
+
+  startSegment();
+  vadInterval = setInterval(vadTick, VAD_POLL_MS);
+  setMic(true, 'Mic on — Shaun hears you');
+}
+
+// Begin recording a fresh utterance segment and reset its VAD state.
+function startSegment(){
+  segmentStart = performance.now();
+  lastVoice = segmentStart;
+  sawSpeech = false;
+  peakRms = 0;
+  segmentValid = false;
+  if (micRecorder && micRecorder.state === 'inactive') micRecorder.start(); // no timeslice → one blob at stop()
+}
+
+// End the current segment; ondataavailable decides whether to actually send it.
+function endSegment(reason){
+  const dur = performance.now() - segmentStart;
+  segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
+  if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop → startSegment()
+}
+
+// Poll mic energy; cut the segment on a trailing pause or the max-length cap.
+function vadTick(){
+  if (!micAnalyser || !micRecorder || micRecorder.state !== 'recording') return;
+  micAnalyser.getByteTimeDomainData(vadBuf);
+  let sum = 0;
+  for (let i = 0; i < vadBuf.length; i++){ const v = (vadBuf[i] - 128) / 128; sum += v * v; }
+  const rms = Math.sqrt(sum / vadBuf.length);
+  const now = performance.now();
+  if (rms > peakRms) peakRms = rms;
+  if (rms >= VAD_SILENCE_RMS){ sawSpeech = true; lastVoice = now; }
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment('pause');
+  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment('max-length');
+}
+
+// Tear down the mic + VAD without touching the WS or the state line.
+function stopMic(){
+  micActive = false; // set first so onstop won't restart a segment
+  if (vadInterval){ clearInterval(vadInterval); vadInterval = null; }
+  if (micRecorder && micRecorder.state !== 'inactive'){
+    // Flush a final in-progress utterance if it contained speech.
+    segmentValid = sawSpeech && performance.now() - segmentStart >= VAD_MIN_UTTERANCE_MS;
+    micRecorder.stop();
+  }
+  if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  micRecorder = null;
+  micAnalyser = null;
+  vadBuf = null;
+  sawSpeech = false;
+  setMic(false, 'Mic off');
+}
+
+function setMic(on, text){
+  micActive = on;
+  $('mic').className = 'mic' + (on ? '' : ' off');
+  $('mic-text').textContent = text;
+}
+
+function leaveCall(){
+  stopMic();
+  if (ws) { ws.close(); ws = null; }
+  setState('Call ended');
+  $('text-input').disabled = true;
+}
+</script>
+</body>
+</html>
