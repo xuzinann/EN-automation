@@ -284,7 +284,25 @@ let audioContext = null;
 let analyserNode = null;
 let micActive = false;
 let levelAnimFrame = null;
-const CHUNK_INTERVAL_MS = 5000;
+
+// VAD (voice-activity detection) utterance endpointing. The recorder captures
+// one segment per utterance — start() with no timeslice produces a single,
+// complete WebM blob on stop(), which the backend can decode. A poll loop
+// watches mic energy and cuts the segment after a pause, so the backend gets
+// whole utterances with real endpointing instead of fixed 5s windows (whose
+// 2nd+ fragments were headerless and undecodable).
+const VAD_POLL_MS = 50;             // energy sampling cadence
+const VAD_SILENCE_RMS = 0.015;      // RMS at/under this counts as silence
+const VAD_SILENCE_MS = 800;         // trailing silence that ends an utterance
+const VAD_MIN_UTTERANCE_MS = 400;   // drop blips shorter than this
+const VAD_MAX_UTTERANCE_MS = 20000; // force-cut a long monologue
+let vadInterval = null;
+let vadBuf = null;
+let segmentStart = 0;
+let lastVoice = 0;
+let sawSpeech = false;
+let peakRms = 0;
+let segmentValid = false;
 
 function setStatus(id, msg, loading=false) {
   const el = document.getElementById(id);
@@ -587,34 +605,91 @@ async function startMic() {
     audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
   });
 
-  // Audio level visualizer
+  // Audio analysis — shared by the level meter and the VAD endpointer.
   audioContext = new AudioContext();
   const source = audioContext.createMediaStreamSource(audioStream);
   analyserNode = audioContext.createAnalyser();
   analyserNode.fftSize = 256;
   source.connect(analyserNode);
+  vadBuf = new Uint8Array(analyserNode.fftSize);
   startLevelMeter();
 
-  // MediaRecorder — chunks every CHUNK_INTERVAL_MS
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus'
     : 'audio/webm';
 
   mediaRecorder = new MediaRecorder(audioStream, { mimeType });
 
-  mediaRecorder.ondataavailable = async (event) => {
-    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+  // One segment per utterance: stop() flushes a single complete WebM blob.
+  mediaRecorder.ondataavailable = (event) => {
+    if (segmentValid && event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(event.data);
     }
   };
+  // After each cut, immediately begin the next segment (unless mic is off).
+  mediaRecorder.onstop = () => {
+    if (micActive && mediaRecorder) startSegment();
+  };
 
-  mediaRecorder.start(CHUNK_INTERVAL_MS);
+  startSegment();
+  vadInterval = setInterval(vadTick, VAD_POLL_MS);
   micActive = true;
   updateMicUI(true);
 }
 
+// Begin recording a fresh utterance segment and reset its VAD state.
+function startSegment() {
+  segmentStart = performance.now();
+  lastVoice = segmentStart;
+  sawSpeech = false;
+  peakRms = 0;
+  segmentValid = false;
+  if (mediaRecorder && mediaRecorder.state === 'inactive') {
+    mediaRecorder.start(); // no timeslice → one blob delivered at stop()
+  }
+}
+
+// End the current segment; ondataavailable decides whether to send it.
+function endSegment(reason) {
+  const dur = performance.now() - segmentStart;
+  segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
+  console.log(`[VAD] ${segmentValid ? 'send' : 'drop'} (${reason})`,
+              { ms: Math.round(dur), peakRms: +peakRms.toFixed(3), sawSpeech });
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop(); // → ondataavailable → onstop → startSegment()
+  }
+}
+
+// Poll mic energy; cut the segment on a trailing pause or the max-length cap.
+function vadTick() {
+  if (!analyserNode || !mediaRecorder || mediaRecorder.state !== 'recording') return;
+  analyserNode.getByteTimeDomainData(vadBuf);
+  let sum = 0;
+  for (let i = 0; i < vadBuf.length; i++) {
+    const v = (vadBuf[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / vadBuf.length);
+  const now = performance.now();
+  if (rms > peakRms) peakRms = rms;
+  if (rms >= VAD_SILENCE_RMS) { sawSpeech = true; lastVoice = now; }
+
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) {
+    endSegment('pause');
+  } else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) {
+    endSegment('max-length');
+  }
+}
+
 function stopMic() {
+  micActive = false; // set first so onstop won't restart a segment
+  if (vadInterval) {
+    clearInterval(vadInterval);
+    vadInterval = null;
+  }
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    // Flush a final in-progress utterance if it contained speech.
+    segmentValid = sawSpeech && performance.now() - segmentStart >= VAD_MIN_UTTERANCE_MS;
     mediaRecorder.stop();
   }
   if (audioStream) {
@@ -630,7 +705,9 @@ function stopMic() {
     levelAnimFrame = null;
   }
   mediaRecorder = null;
-  micActive = false;
+  analyserNode = null;
+  vadBuf = null;
+  sawSpeech = false;
   updateMicUI(false);
 }
 
@@ -651,7 +728,7 @@ function updateMicUI(active) {
   if (active) {
     btn.className = 'mic-btn recording';
     status.className = 'mic-status live';
-    status.textContent = 'Recording — streaming every 5s';
+    status.textContent = 'Recording — auto-sends when you pause';
   } else {
     btn.className = 'mic-btn idle';
     status.className = 'mic-status';
