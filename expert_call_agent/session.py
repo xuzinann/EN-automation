@@ -7,6 +7,7 @@ class SessionManager:
         self._sessions: dict[str, CallSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._active_calls: set[str] = set()
+        self._live_session_id: str | None = None
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         if session_id not in self._locks:
@@ -28,7 +29,24 @@ class SessionManager:
             session = self._sessions[session_id]
             for key, value in updates.items():
                 setattr(session, key, value)
+            if "status" in updates:
+                if updates["status"] == "live":
+                    self._live_session_id = session_id
+                elif self._live_session_id == session_id:
+                    self._live_session_id = None
             return session
+
+    def get_live_session_id(self) -> str | None:
+        """The session_id of the current live call, or None.
+
+        Validates against live status so a stale pointer (e.g. a session that
+        ended without a status update) is never returned.
+        """
+        sid = self._live_session_id
+        session = self._sessions.get(sid) if sid else None
+        if session is not None and session.status == "live":
+            return sid
+        return None
 
     async def add_transcript_entry(self, session_id: str, entry: TranscriptEntry):
         async with self._get_lock(session_id):
