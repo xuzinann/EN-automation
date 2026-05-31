@@ -285,6 +285,9 @@ let audioContext = null;
 let analyserNode = null;
 let micActive = false;
 let levelAnimFrame = null;
+let ttsQueue = [];
+let ttsPlaying = false;
+let callActive = false;
 
 // VAD (voice-activity detection) utterance endpointing. The recorder captures
 // one segment per utterance — start() with no timeslice produces a single,
@@ -292,23 +295,18 @@ let levelAnimFrame = null;
 // watches mic energy and cuts the segment after a pause, so the backend gets
 // whole utterances with real endpointing instead of fixed 5s windows (whose
 // 2nd+ fragments were headerless and undecodable).
-// Tunable live without a redeploy via URL params, e.g. ?vadK=4&vadSilence=600&vadFloorMax=0.05
+// Tunable live without a redeploy via URL params, e.g. ?vadK=4&vadSilence=1200&vadFloorMax=0.05
 const _vp = new URLSearchParams(location.search);
 const _vn = (k, d) => { const v = parseFloat(_vp.get(k)); return Number.isFinite(v) ? v : d; };
-const VAD_POLL_MS = _vn('vadPoll', 50);             // energy sampling cadence
-const VAD_SILENCE_MS = _vn('vadSilence', 800);      // trailing silence that ends an utterance
-const VAD_MIN_UTTERANCE_MS = _vn('vadMin', 400);    // drop blips shorter than this
-const VAD_MAX_UTTERANCE_MS = _vn('vadMax', 20000);  // force-cut a long monologue
-// Adaptive endpointing: the speech threshold rides above the measured ambient noise
-// floor (threshold = floor * K, clamped) instead of a fixed level, so a quiet mic and
-// a noisy room both self-calibrate. The floor is seeded from the first VAD_CALIB_FRAMES
-// of each mic session (silent, thanks to the opening delay), then tracked down fast /
-// up slow — speech never raises it, so the threshold can't drift up under a long utterance.
-const VAD_RMS_K = _vn('vadK', 3.0);                 // threshold = noiseFloor * K
-const VAD_RMS_MIN = _vn('vadFloorMin', 0.012);      // threshold never below this (clean room)
-const VAD_RMS_MAX = _vn('vadFloorMax', 0.045);      // threshold never above this (noisy room)
-const VAD_SPEECH_FRAMES = _vn('vadFrames', 2);      // consecutive loud frames before "speech"
-const VAD_CALIB_FRAMES = _vn('vadCalib', 8);        // frames (~400ms) to seed the ambient floor
+const VAD_POLL_MS = _vn('vadPoll', 50);
+const VAD_SILENCE_MS = _vn('vadSilence', 1200);
+const VAD_MIN_UTTERANCE_MS = _vn('vadMin', 800);
+const VAD_MAX_UTTERANCE_MS = _vn('vadMax', 30000);
+const VAD_RMS_K = _vn('vadK', 3.0);
+const VAD_RMS_MIN = _vn('vadFloorMin', 0.010);
+const VAD_RMS_MAX = _vn('vadFloorMax', 0.040);
+const VAD_SPEECH_FRAMES = _vn('vadFrames', 2);
+const VAD_CALIB_FRAMES = _vn('vadCalib', 8);
 let vadInterval = null;
 let vadBuf = null;
 let segmentStart = 0;
@@ -609,6 +607,13 @@ async function startCall() {
   document.getElementById('btn-end-call').disabled = false;
   document.getElementById('btn-demo').disabled = false;
   document.getElementById('btn-mic').disabled = false;
+  callActive = true;
+
+  // Wait for WS to be ready before doing anything else
+  await new Promise((resolve) => {
+    ws.onopen = resolve;
+    setTimeout(resolve, 3000);
+  });
 
   // Auto-start mic if available
   try {
@@ -616,6 +621,9 @@ async function startCall() {
   } catch(e) {
     console.log('Mic not available, using text fallback:', e.message);
     setMicStatus('No mic — use text input', false);
+    // Open text fallback automatically when mic fails
+    const details = document.querySelector('.text-fallback');
+    if (details) details.open = true;
   }
 }
 
@@ -631,7 +639,13 @@ async function startExpertCall() {
 
 async function startMic() {
   audioStream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      sampleRate: { ideal: 48000 },
+    }
   });
 
   // Audio analysis — shared by the level meter and the VAD endpointer.
@@ -885,14 +899,29 @@ function updateCoverage(coverage) {
 }
 
 function playAudio(b64) {
+  ttsQueue.push(b64);
+  if (!ttsPlaying) playNextTTS();
+}
+
+function playNextTTS() {
+  if (ttsQueue.length === 0) { ttsPlaying = false; return; }
+  ttsPlaying = true;
+  const b64 = ttsQueue.shift();
   const audio = new Audio('data:audio/mp3;base64,' + b64);
-  audio.play().catch(e => console.log('Audio play blocked:', e));
+  audio.onended = () => playNextTTS();
+  audio.onerror = () => playNextTTS();
+  audio.play().catch(() => playNextTTS());
 }
 
 function sendExpertText() {
   const input = document.getElementById('expert-input');
-  if (!input.value.trim() || !ws) return;
-  ws.send(JSON.stringify({ type: 'text_input', text: input.value.trim(), speaker: 'expert' }));
+  const text = input.value.trim();
+  if (!text) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('Call not active. Click "Start Call" first.');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'text_input', text: text, speaker: 'expert' }));
   input.value = '';
 }
 
@@ -903,11 +932,18 @@ function runDemo() {
 }
 
 async function endCall() {
+  callActive = false;
   stopMic();
+  ttsQueue = [];
+  ttsPlaying = false;
+  if (ws) {
+    try { ws.close(); } catch(e) {}
+    ws = null;
+  }
   try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e) {}
-  if (ws) { ws.close(); ws = null; }
   document.getElementById('btn-end-call').disabled = true;
   document.getElementById('btn-mic').disabled = true;
+  document.getElementById('btn-start-call').disabled = false;
   document.getElementById('btn-summarize').disabled = false;
   document.getElementById('btn-export').disabled = false;
 }
