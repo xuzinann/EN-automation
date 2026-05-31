@@ -215,6 +215,10 @@
   .node.pulse { border-color: var(--cyan); box-shadow: 0 0 24px rgba(34, 211, 238, 0.4); transform: translateY(-3px); }
   .node.queue { border-color: var(--violet); }
   .node.guide { border-color: var(--pink); }
+  .orch-bar { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; text-align: center; font-family: "Space Grotesk"; font-weight: 600; font-size: 16px; padding: 16px 22px; border-radius: 14px; border: 1px solid var(--violet); background: linear-gradient(120deg, rgba(168,85,247,0.16), rgba(34,211,238,0.1)); box-shadow: 0 0 26px rgba(168,85,247,0.22); }
+  .orch-bar .ic { font-size: 20px; }
+  .orch-bar small { width: 100%; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .orch-down { text-align: center; color: var(--violet); font-size: 18px; margin: 8px 0 14px; }
   .arrow { color: var(--muted); font-size: 20px; }
   .fan { display: flex; flex-direction: column; gap: 8px; }
   @media (max-width: 760px) { .flow { flex-direction: column; } .arrow { transform: rotate(90deg); } }
@@ -326,6 +330,7 @@
       <a href="#problem">Problem</a>
       <a href="#solution">Solution</a>
       <a href="#how">How it works</a>
+      <a href="#weave">Weave</a>
       <a href="#roi">ROI</a>
       <a href="#market">Market</a>
     </div>
@@ -336,7 +341,7 @@
 <!-- HERO -->
 <header class="hero">
   <div class="wrap">
-    <div class="pill reveal"><span class="dot"></span> Autonomous multi-agent expert interviewer</div>
+    <div class="pill reveal"><span class="dot"></span> Multi-agent harness · Gemini + Claude · traced in Weave</div>
     <h1 class="reveal">60 expert calls.<br />One AI. <span class="grad-text">Zero note-takers.</span></h1>
     <p class="sub reveal">Every consulting due-diligence sprint burns <b>two senior people per call</b> — one asking questions, one taking notes and writing the summary. <b>HTTP 418</b> runs the interview, captures the notes, and ships the deliverable. Autonomously.</p>
     <div class="btn-row reveal">
@@ -445,6 +450,8 @@
     <div class="pipeline reveal">
       <h3>One agent runs the whole engagement</h3>
       <div class="ptag">Drafts the guide <em>before</em> · flags, decides &amp; speaks <em>during</em> — no humans on the line</div>
+      <div class="orch-bar reveal"><span class="ic">🎛️</span> Orchestrator Agent <small>conducts every stage — phase &middot; pacing &middot; delegation &middot; phrasing</small></div>
+      <div class="orch-down reveal">▼</div>
       <div class="flow" id="flow">
         <div class="node guide" data-step="0"><span class="ic">📋</span>Guide draft<small>pre-call</small></div>
         <span class="arrow">⇒</span>
@@ -471,9 +478,17 @@
   <div class="wrap">
     <div class="eyebrow violet reveal">The agents</div>
     <h2 class="section-title reveal">Each agent owns one job. Code makes the call.</h2>
-    <p class="section-lead reveal">LLMs handle judgment — phrasing, probing, synthesis. A deterministic priority queue handles control flow, so the call is inspectable, testable, and never goes off-script.</p>
+    <p class="section-lead reveal">An <b>Orchestrator agent</b> conducts the engagement — phases, pacing, and how each question is phrased. Underneath it, a <b>deterministic priority queue</b> decides <em>which</em> flag wins. <b>LLMs flag and phrase; code arbitrates — that layered split is the harness.</b></p>
+
+    <div class="stat-grid reveal" style="margin-bottom:44px;">
+      <div class="stat"><div class="v grad-text">8</div><div class="k">agents orchestrated</div></div>
+      <div class="stat"><div class="v grad-text">3</div><div class="k">LLMs orchestrated</div></div>
+      <div class="stat"><div class="v grad-text">1</div><div class="k">deterministic queue</div></div>
+      <div class="stat"><div class="v grad-text">0</div><div class="k">humans on the call</div></div>
+    </div>
 
     <div class="agents">
+      <div class="agent reveal" style="border-color:rgba(168,85,247,0.5)"><div class="ic">🎛️</div><h4>Orchestrator Agent</h4><p>The conductor. Runs the phase state machine, sets pacing (speak vs. listen), and routes the queue's pick to the Responder.</p><span class="model">Gemini 2.5 Flash</span></div>
       <div class="agent reveal"><div class="ic">📥</div><h4>Context Ingestion</h4><p>Turns dense briefs and prior calls into structured context every other agent references.</p><span class="model">Claude</span></div>
       <div class="agent reveal"><div class="ic">📋</div><h4>Guide Drafter</h4><p>Builds the role-specific interview guide: openings, deep-dives, red-flag probes, data to confirm.</p><span class="model">Claude</span></div>
       <div class="agent reveal"><div class="ic">❓</div><h4>QA Agent</h4><p>Proposes the best next question, tiered must-ask → nice-to-have. Flags only — never decides.</p><span class="model">Claude</span></div>
@@ -482,6 +497,40 @@
       <div class="agent det reveal"><div class="ic">⚖️</div><h4>Priority Queue</h4><p>Plain code. Orders every flag by a fixed tier, breaks ties FIFO, drops duplicates, pops the winner.</p><span class="model">Deterministic</span></div>
       <div class="agent reveal"><div class="ic">🔊</div><h4>Responder</h4><p>Phrases the chosen flag into a natural utterance and speaks it to the expert via voice.</p><span class="model">Gemini 2.5 Flash</span></div>
       <div class="agent reveal"><div class="ic">📊</div><h4>Summarizer</h4><p>One synthesis pass: key takeaways, surprises, gaps, and the full markdown deliverable.</p><span class="model">Claude</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- WEAVE / OBSERVABILITY -->
+<section id="weave">
+  <div class="wrap">
+    <div class="eyebrow cyan reveal">Observability &amp; evals</div>
+    <h2 class="section-title reveal">Every agent turn — <span class="grad-text">traced and scored in Weave.</span></h2>
+    <p class="section-lead reveal">A multi-agent harness is only as good as your ability to see inside it. We instrument the whole system with <b>W&amp;B Weave</b>: every flag, queue decision, and spoken turn is a span you can inspect — and flag-quality is measured, not guessed.</p>
+    <div class="tam-logic">
+      <div class="tlc reveal">
+        <h4>🌳 Full-harness tracing</h4>
+        <p>One <b>@op()</b> decorator per agent turns each turn into a nested trace: parallel <b>QA · Follow-up · Note-taker</b> → the deterministic <b>priority queue</b> → the <b>Responder</b>. The orchestration is visible end to end — across Gemini <em>and</em> Claude.</p>
+      </div>
+      <div class="tlc reveal">
+        <h4>📊 Evaluation harness</h4>
+        <p><b>weave.Evaluation</b> scores the agents against a labeled dataset — <b>flag precision</b>, contradiction recall, question quality, latency. We tune the harness on data, not vibes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- BUILT WITH / SPONSORS -->
+<section id="stack">
+  <div class="wrap">
+    <div class="eyebrow violet reveal">Built with</div>
+    <h2 class="section-title reveal">A real multi-agent stack.</h2>
+    <p class="section-lead reveal">Multiple models, orchestrated deterministically, observed with Weave.</p>
+    <div class="agents">
+      <div class="agent reveal" style="border-color:rgba(34,211,238,0.45)"><div class="ic">📈</div><h4>W&amp;B Weave</h4><p>Traces every agent + LLM call and runs the evaluation harness. Our observability and eval layer.</p><span class="model">Sponsor</span></div>
+      <div class="agent reveal"><div class="ic">✨</div><h4>Google Gemini</h4><p>2.5 Flash + Pro on Vertex AI — native-audio STT, the follow-up agent, note-taker, and the live responder.</p><span class="model">Vertex AI</span></div>
+      <div class="agent reveal"><div class="ic">🧠</div><h4>Anthropic Claude</h4><p>Sonnet 4 on Vertex AI — context ingestion, the QA questioning agent, and post-call synthesis.</p><span class="model">Vertex AI</span></div>
+      <div class="agent det reveal"><div class="ic">⚙️</div><h4>FastAPI + asyncio</h4><p>WebSocket live loop with parallel agent fan-out and a deterministic priority queue in plain Python.</p><span class="model">Orchestration</span></div>
     </div>
   </div>
 </section>
