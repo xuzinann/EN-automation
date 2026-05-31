@@ -3,25 +3,61 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Expert Call Virtual Agent</title>
+<title>Expert Call Virtual Agent — HTTP 418</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #1a1a1a; }
 
-  header { background: #1a1a2e; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { font-size: 20px; font-weight: 600; }
+  header { background: #1a1a2e; color: white; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo svg { width: 32px; height: 32px; }
+  .logo-text { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; color: #7eb8da; text-transform: uppercase; }
+  header h1 { font-size: 18px; font-weight: 600; border-left: 1px solid #334; padding-left: 14px; }
   #session-badge { background: #16213e; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-family: monospace; }
 
   .phase { padding: 20px 24px; border-bottom: 1px solid #ddd; }
-  .phase-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 14px; }
+  .phase-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 14px; }
 
-  .precall-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
-  .upload-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-  .upload-panel h3 { font-size: 15px; margin-bottom: 12px; }
-  .context-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); max-height: 500px; overflow-y: auto; }
+  .precall-layout { display: grid; grid-template-columns: 260px 1fr 1fr; gap: 16px; }
+  .upload-panel { background: white; border-radius: 8px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .upload-panel h3 { font-size: 14px; margin-bottom: 10px; }
+
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; flex-direction: column; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #eee; }
+  .card-header h3 { font-size: 14px; font-weight: 600; color: #1a1a2e; }
+  .card-body { padding: 18px; overflow-y: auto; max-height: 520px; flex: 1; }
+  .card-actions { display: flex; gap: 6px; }
+
+  .editable-content { outline: none; min-height: 60px; font-size: 13px; line-height: 1.7; }
+  .editable-content:focus { background: #fafbff; border-radius: 4px; }
+  .editable-content[contenteditable="true"] { cursor: text; }
+
+  .ctx-section { margin-bottom: 16px; }
+  .ctx-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #888; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #f0f0f0; }
+  .ctx-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .ctx-meta-item { background: #f8f9fa; border-radius: 6px; padding: 10px 12px; }
+  .ctx-meta-item .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 3px; }
+  .ctx-meta-item .value { font-size: 13px; font-weight: 500; color: #1a1a2e; }
+  .ctx-list { list-style: none; padding: 0; }
+  .ctx-list li { padding: 5px 0; font-size: 13px; border-bottom: 1px solid #f5f5f5; display: flex; align-items: baseline; gap: 6px; }
+  .ctx-list li::before { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: #7eb8da; flex-shrink: 0; margin-top: 6px; }
+  .ctx-entity { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+  .ctx-entity .name { font-weight: 500; }
+  .ctx-entity .role { color: #666; font-size: 12px; }
+
+  .guide-section { margin-bottom: 14px; }
+  .guide-section-title { font-size: 13px; font-weight: 600; color: #1a1a2e; margin-bottom: 8px; padding: 6px 10px; background: #f0f4f8; border-radius: 4px; }
+  .guide-question { padding: 6px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+  .guide-question .q-text { font-weight: 500; }
+  .guide-question .q-rationale { font-size: 12px; color: #666; margin-top: 2px; }
+  .guide-question .q-priority { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; display: inline-block; margin-right: 4px; }
+  .priority-must_ask { background: #ffebee; color: #c62828; }
+  .priority-should_ask { background: #fff8e1; color: #f57f17; }
+  .priority-nice_to_have { background: #f5f5f5; color: #666; }
 
   .call-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
-  .call-panel { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); max-height: 500px; overflow-y: auto; }
+  .call-panel { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); max-height: 500px; overflow-y: auto; }
   .call-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 8px; }
 
   .transcript-entry { padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
@@ -43,6 +79,8 @@
   .cat-financials { background: #fce4ec; color: #b71c1c; }
   .cat-quote { background: #f5f5f5; color: #333; font-style: italic; }
   .cat-other { background: #eceff1; color: #455a64; }
+  .cat-technology { background: #e8eaf6; color: #283593; }
+  .cat-strategic { background: #e0f2f1; color: #00695c; }
 
   .coverage-bar { margin: 6px 0; }
   .coverage-bar .label { font-size: 12px; font-weight: 500; }
@@ -54,7 +92,7 @@
   .text-input-row { display: flex; gap: 8px; margin-top: 10px; }
   .text-input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
 
-  .controls { padding: 16px 24px; display: flex; gap: 10px; align-items: center; }
+  .controls { padding: 12px 24px; display: flex; gap: 10px; align-items: center; }
 
   button { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .2s; }
   .btn-primary { background: #1a1a2e; color: white; }
@@ -64,8 +102,12 @@
   .btn-success:hover { background: #1b5e20; }
   .btn-danger { background: #c62828; color: white; }
   .btn-danger:hover { background: #b71c1c; }
-  .btn-outline { background: white; color: #1a1a2e; border: 1px solid #1a1a2e; }
+  .btn-outline { background: white; color: #1a1a2e; border: 1px solid #ccc; }
   .btn-outline:hover { background: #f5f5f5; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  .btn-edit { background: none; border: 1px solid #ccc; color: #666; padding: 3px 10px; font-size: 11px; border-radius: 4px; }
+  .btn-edit:hover { background: #f0f0f0; }
+  .btn-edit.active { background: #e3f2fd; border-color: #90caf9; color: #0d47a1; }
 
   .status-msg { font-size: 13px; color: #666; padding: 4px 0; }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #1a1a2e; border-radius: 50%; animation: spin .6s linear infinite; margin-right: 6px; vertical-align: middle; }
@@ -73,45 +115,87 @@
 
   .hidden { display: none; }
 
-  .summary-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .summary-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   .summary-panel h3 { margin-bottom: 12px; }
   .summary-content { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
   .summary-content h1, .summary-content h2, .summary-content h3 { margin-top: 16px; margin-bottom: 8px; }
   .summary-content ul, .summary-content ol { padding-left: 20px; }
 
   #demo-progress { font-size: 13px; color: #0d47a1; font-weight: 500; }
+
+  .save-toast { position: fixed; bottom: 24px; right: 24px; background: #2e7d32; color: white; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 100; }
+  .save-toast.show { opacity: 1; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Expert Call Virtual Agent</h1>
+  <div class="header-left">
+    <div class="logo">
+      <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M8 12C8 12 6 10 6 8C6 6 8 4 8 4" stroke="#7eb8da" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M12 12C12 12 10 10 10 8C10 6 12 4 12 4" stroke="#7eb8da" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M16 12C16 12 14 10 14 8C14 6 16 4 16 4" stroke="#7eb8da" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M4 14H20C20 14 22 14 22 16V22C22 24 20 26 18 26H6C4 26 2 24 2 22V16C2 14 4 14 4 14Z" stroke="white" stroke-width="1.5" fill="none"/>
+        <path d="M22 18H24C26 18 28 19 28 21C28 23 26 24 24 24H22" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M6 26L5 29H19L18 26" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <div class="logo-text">HTTP 418</div>
+    </div>
+    <h1>Expert Call Virtual Agent</h1>
+  </div>
   <div id="session-badge">No session</div>
 </header>
 
 <!-- PRE-CALL PHASE -->
 <div class="phase" id="phase-precall">
   <div class="phase-title">Phase 1: Pre-Call Preparation</div>
-  <div class="precall-grid">
+  <div class="precall-layout">
+    <!-- Left: Upload Controls -->
     <div class="upload-panel">
-      <h3>Upload Project Brief</h3>
-      <input type="file" id="brief-file" accept=".md,.txt" style="margin-bottom:10px; font-size:13px;">
-      <br>
-      <button class="btn-primary" id="btn-upload" onclick="uploadBrief()">Upload & Analyze</button>
+      <h3>Project Brief</h3>
+      <input type="file" id="brief-file" accept=".md,.txt" style="margin-bottom:10px; font-size:12px; width:100%;">
+      <button class="btn-primary" style="width:100%; margin-bottom:6px;" id="btn-upload" onclick="uploadBrief()">Upload & Analyze</button>
       <div class="status-msg" id="upload-status"></div>
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
-      <button class="btn-primary" id="btn-guide" onclick="generateGuide()" disabled>Generate Call Guide</button>
+      <hr style="margin:14px 0; border:none; border-top:1px solid #eee;">
+      <button class="btn-primary" style="width:100%; margin-bottom:6px;" id="btn-guide" onclick="generateGuide()" disabled>Generate Call Guide</button>
       <div class="status-msg" id="guide-status"></div>
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
-      <button class="btn-outline" id="btn-sample" onclick="useSampleBrief()">Use Sample Brief</button>
-      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
-      <div style="font-size:12px; font-weight:600; text-transform:uppercase; color:#666; margin-bottom:8px;">Context Library</div>
+      <hr style="margin:14px 0; border:none; border-top:1px solid #eee;">
+      <button class="btn-outline" style="width:100%; margin-bottom:10px;" id="btn-sample" onclick="useSampleBrief()">Use Sample Brief</button>
+      <div style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:6px;">Context Library</div>
       <div id="context-library"></div>
     </div>
-    <div class="context-panel">
-      <h3>Project Context</h3>
-      <div id="context-display"><p style="color:#999; font-size:13px;">Upload a brief to see extracted context here.</p></div>
-      <div id="guide-display" class="hidden" style="margin-top:16px;"></div>
+
+    <!-- Middle: Project Context -->
+    <div class="card" id="context-card">
+      <div class="card-header">
+        <h3>Project Context</h3>
+        <div class="card-actions">
+          <button class="btn-edit" id="btn-edit-context" onclick="toggleEdit('context')">Edit</button>
+          <button class="btn-edit hidden" id="btn-save-context" onclick="saveContext()">Save</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="context-display" class="editable-content">
+          <p style="color:#999; font-size:13px;">Upload a brief to see extracted context here.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Call Guide -->
+    <div class="card" id="guide-card">
+      <div class="card-header">
+        <h3>Call Guide</h3>
+        <div class="card-actions">
+          <button class="btn-edit" id="btn-edit-guide" onclick="toggleEdit('guide')">Edit</button>
+          <button class="btn-edit hidden" id="btn-save-guide" onclick="saveGuide()">Save</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="guide-display" class="editable-content">
+          <p style="color:#999; font-size:13px;">Generate a call guide after uploading context.</p>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -167,13 +251,54 @@
   </div>
 </div>
 
+<div class="save-toast" id="save-toast">Changes saved</div>
+
 <script>
 let sessionId = null;
 let ws = null;
+let currentContext = null;
+let currentGuide = null;
 
 function setStatus(id, msg, loading=false) {
   const el = document.getElementById(id);
   el.innerHTML = (loading ? '<span class="spinner"></span>' : '') + msg;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('save-toast');
+  t.textContent = msg || 'Changes saved';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function toggleEdit(section) {
+  const display = document.getElementById(section === 'context' ? 'context-display' : 'guide-display');
+  const editBtn = document.getElementById(`btn-edit-${section}`);
+  const saveBtn = document.getElementById(`btn-save-${section}`);
+  const isEditing = display.contentEditable === 'true';
+
+  if (isEditing) {
+    display.contentEditable = 'false';
+    editBtn.textContent = 'Edit';
+    editBtn.classList.remove('active');
+    saveBtn.classList.add('hidden');
+  } else {
+    display.contentEditable = 'true';
+    display.focus();
+    editBtn.textContent = 'Editing';
+    editBtn.classList.add('active');
+    saveBtn.classList.remove('hidden');
+  }
+}
+
+async function saveContext() {
+  showToast('Context saved locally');
+  toggleEdit('context');
+}
+
+async function saveGuide() {
+  showToast('Call guide saved locally');
+  toggleEdit('guide');
 }
 
 async function uploadBrief() {
@@ -191,8 +316,9 @@ async function uploadBrief() {
     const data = await resp.json();
     sessionId = data.session_id;
     document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    currentContext = data.project_context;
     renderContext(data.project_context);
-    setStatus('upload-status', 'Context extracted successfully.');
+    setStatus('upload-status', 'Context extracted.');
     document.getElementById('btn-guide').disabled = false;
   } catch(e) {
     setStatus('upload-status', 'Error: ' + e.message);
@@ -214,6 +340,7 @@ async function useSampleBrief() {
     const data = await result.json();
     sessionId = data.session_id;
     document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    currentContext = data.project_context;
     renderContext(data.project_context);
     setStatus('upload-status', 'Sample brief analyzed.');
     document.getElementById('btn-guide').disabled = false;
@@ -223,13 +350,65 @@ async function useSampleBrief() {
 }
 
 function renderContext(ctx) {
-  let html = `<strong>${ctx.company_name}</strong> — ${ctx.industry} (${ctx.deal_type})<br><br>`;
-  html += `<strong>Hypotheses:</strong><ul>${ctx.key_hypotheses.map(h => `<li>${h}</li>`).join('')}</ul>`;
-  html += `<strong>Gaps to Fill:</strong><ul>${ctx.gaps_to_fill.map(g => `<li>${g}</li>`).join('')}</ul>`;
-  if (ctx.key_entities.length) {
-    html += `<strong>Key Entities:</strong><ul>${ctx.key_entities.map(e => `<li>${e.name} — ${e.role}</li>`).join('')}</ul>`;
+  let html = '';
+
+  // Meta cards
+  html += '<div class="ctx-meta">';
+  html += `<div class="ctx-meta-item"><div class="label">Company</div><div class="value">${ctx.company_name}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Industry</div><div class="value">${ctx.industry}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Deal Type</div><div class="value">${ctx.deal_type}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Expert Profile</div><div class="value">${ctx.expert_profile ? ctx.expert_profile.substring(0, 80) + '...' : 'N/A'}</div></div>`;
+  html += '</div>';
+
+  // Hypotheses
+  if (ctx.key_hypotheses?.length) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Key Hypotheses</div>';
+    html += '<ul class="ctx-list">';
+    ctx.key_hypotheses.forEach(h => { html += `<li><span>${h}</span></li>`; });
+    html += '</ul></div>';
   }
-  html += `<strong>Expert Profile:</strong> ${ctx.expert_profile}`;
+
+  // Data Points
+  if (ctx.known_data_points?.length) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Known Data Points</div>';
+    html += '<ul class="ctx-list">';
+    ctx.known_data_points.forEach(dp => {
+      const val = dp.value ? ` — <strong>${dp.value}</strong>` : '';
+      const conf = dp.confidence ? ` <span style="font-size:10px; color:#888;">(${dp.confidence})</span>` : '';
+      html += `<li><span>${dp.description}${val}${conf}</span></li>`;
+    });
+    html += '</ul></div>';
+  }
+
+  // Gaps
+  if (ctx.gaps_to_fill?.length) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Gaps to Fill</div>';
+    html += '<ul class="ctx-list">';
+    ctx.gaps_to_fill.forEach(g => { html += `<li><span>${g}</span></li>`; });
+    html += '</ul></div>';
+  }
+
+  // Entities
+  if (ctx.key_entities?.length) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Key Entities</div>';
+    ctx.key_entities.forEach(e => {
+      html += `<div class="ctx-entity"><span class="name">${e.name}</span><span class="role">${e.role}</span></div>`;
+    });
+    html += '</div>';
+  }
+
+  // Expert profile full
+  if (ctx.expert_profile) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Ideal Expert Profile</div>';
+    html += `<p style="font-size:13px; line-height:1.5; color:#444;">${ctx.expert_profile}</p>`;
+    html += '</div>';
+  }
+
   document.getElementById('context-display').innerHTML = html;
 }
 
@@ -240,6 +419,7 @@ async function generateGuide() {
   try {
     const resp = await fetch(`/api/precall/generate-guide/${sessionId}`, { method: 'POST' });
     const data = await resp.json();
+    currentGuide = data.call_guide;
     renderGuide(data.call_guide);
     setStatus('guide-status', 'Call guide ready.');
     document.getElementById('btn-start-call').disabled = false;
@@ -251,33 +431,68 @@ async function generateGuide() {
 }
 
 function renderGuide(guide) {
-  const el = document.getElementById('guide-display');
-  el.classList.remove('hidden');
-
-  let html = '<h3 style="margin-top:16px;">Interview Guide</h3>';
+  let html = '';
 
   if (guide.opening_questions?.length) {
-    html += '<strong>Opening:</strong><ul>';
-    guide.opening_questions.forEach(q => { html += `<li><strong>${q.text}</strong><br><em style="font-size:12px; color:#666;">${q.rationale}</em></li>`; });
-    html += '</ul>';
+    html += '<div class="guide-section">';
+    html += '<div class="guide-section-title">Opening Questions</div>';
+    guide.opening_questions.forEach(q => {
+      html += `<div class="guide-question">
+        <span class="q-priority priority-${q.priority}">${q.priority.replace('_',' ')}</span>
+        <span class="q-text">${q.text}</span>
+        <div class="q-rationale">${q.rationale || ''}</div>
+      </div>`;
+    });
+    html += '</div>';
   }
 
   guide.deep_dive_sections?.forEach(section => {
-    html += `<strong>${section.topic}:</strong><ul>`;
+    html += '<div class="guide-section">';
+    html += `<div class="guide-section-title">${section.topic}</div>`;
     section.questions?.forEach(q => {
-      const badge = q.priority === 'must_ask' ? '🔴' : q.priority === 'should_ask' ? '🟡' : '⚪';
-      html += `<li>${badge} <strong>${q.text}</strong><br><em style="font-size:12px; color:#666;">${q.rationale}</em></li>`;
+      html += `<div class="guide-question">
+        <span class="q-priority priority-${q.priority}">${q.priority.replace('_',' ')}</span>
+        <span class="q-text">${q.text}</span>
+        <div class="q-rationale">${q.rationale || ''}</div>
+      </div>`;
     });
-    html += '</ul>';
+    html += '</div>';
   });
 
   if (guide.red_flag_probes?.length) {
-    html += '<strong>Red Flag Probes:</strong><ul>';
-    guide.red_flag_probes.forEach(q => { html += `<li>⚠️ ${q.text}</li>`; });
-    html += '</ul>';
+    html += '<div class="guide-section">';
+    html += '<div class="guide-section-title" style="background:#fff3e0;">Red Flag Probes</div>';
+    guide.red_flag_probes.forEach(q => {
+      html += `<div class="guide-question">
+        <span class="q-priority priority-must_ask">probe</span>
+        <span class="q-text">${q.text}</span>
+        <div class="q-rationale">${q.rationale || ''}</div>
+      </div>`;
+    });
+    html += '</div>';
   }
 
-  el.innerHTML = html;
+  if (guide.data_points_to_confirm?.length) {
+    html += '<div class="guide-section">';
+    html += '<div class="guide-section-title">Data Points to Confirm</div>';
+    html += '<ul class="ctx-list">';
+    guide.data_points_to_confirm.forEach(dp => { html += `<li><span>${dp}</span></li>`; });
+    html += '</ul></div>';
+  }
+
+  if (guide.closing_questions?.length) {
+    html += '<div class="guide-section">';
+    html += '<div class="guide-section-title">Closing Questions</div>';
+    guide.closing_questions.forEach(q => {
+      html += `<div class="guide-question">
+        <span class="q-priority priority-${q.priority}">${q.priority.replace('_',' ')}</span>
+        <span class="q-text">${q.text}</span>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  document.getElementById('guide-display').innerHTML = html;
 }
 
 async function startCall() {
@@ -353,7 +568,7 @@ function addSuggestion(msg) {
     <div class="agent-tag">${msg.agent || 'agent'} — ${msg.action_type || 'question'}</div>
     <div class="question">${msg.question}</div>
     <div class="rationale">${msg.rationale || ''}</div>
-    <button class="btn-outline" style="margin-top:6px; font-size:12px;" onclick="askQuestion('${msg.question.replace(/'/g, "\\'")}')">Ask This</button>
+    <button class="btn-outline btn-sm" style="margin-top:6px;" onclick="askQuestion('${msg.question.replace(/'/g, "\\'")}')">Ask This</button>
   `;
   list.insertBefore(card, list.firstChild);
 }
@@ -382,7 +597,7 @@ function updateCoverage(coverage) {
 
 function updateTakeaways(takeaways) {
   const list = document.getElementById('takeaways-list');
-  list.innerHTML = takeaways.map(t => `<div class="takeaway-item">• ${t}</div>`).join('');
+  list.innerHTML = takeaways.map(t => `<div class="takeaway-item">${t}</div>`).join('');
 }
 
 function playAudio(b64) {
@@ -441,13 +656,13 @@ async function loadContextLibrary() {
     const data = await resp.json();
     const lib = document.getElementById('context-library');
     if (!data.files.length) {
-      lib.innerHTML = '<p style="color:#999; font-size:12px;">No context files found.</p>';
+      lib.innerHTML = '<p style="color:#999; font-size:12px;">No context files.</p>';
       return;
     }
     lib.innerHTML = data.files.map(f =>
-      `<button class="btn-outline" style="width:100%; text-align:left; margin-bottom:6px; font-size:12px; padding:8px 12px;" onclick="loadContextFile('${f.path}')">
+      `<button class="btn-outline" style="width:100%; text-align:left; margin-bottom:6px; font-size:11px; padding:8px 10px;" onclick="loadContextFile('${f.path}')">
         <strong>${f.name}</strong><br>
-        <span style="color:#666; font-size:11px;">${f.size}</span>
+        <span style="color:#888; font-size:10px;">${f.size}</span>
       </button>`
     ).join('');
   } catch(e) {
@@ -470,6 +685,7 @@ async function loadContextFile(path) {
     const data = await result.json();
     sessionId = data.session_id;
     document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    currentContext = data.project_context;
     renderContext(data.project_context);
     setStatus('upload-status', 'Context file analyzed.');
     document.getElementById('btn-guide').disabled = false;
