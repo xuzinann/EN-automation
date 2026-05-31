@@ -221,6 +221,7 @@
     <button class="btn-success" id="btn-start-call" onclick="startCall()" disabled>Start Call</button>
     <button class="btn-danger" id="btn-end-call" onclick="endCall()" disabled>End Call</button>
     <button class="btn-outline" id="btn-demo" onclick="runDemo()" disabled>Run Demo Simulation</button>
+    <button class="btn-primary" id="btn-expert-call" onclick="startExpertCall()" disabled>Start Expert Call</button>
     <span id="demo-progress"></span>
   </div>
   <div class="call-grid">
@@ -490,6 +491,7 @@ async function generateGuide() {
     setStatus('guide-status', 'Call guide ready.');
     document.getElementById('btn-start-call').disabled = false;
     document.getElementById('btn-demo').disabled = false;
+    document.getElementById('btn-expert-call').disabled = false;
   } catch(e) {
     setStatus('guide-status', 'Error: ' + e.message);
   }
@@ -598,6 +600,16 @@ async function startCall() {
     console.log('Mic not available, using text fallback:', e.message);
     setMicStatus('No mic — use text input', false);
   }
+}
+
+async function startExpertCall() {
+  if (!sessionId) { alert('Generate a call guide first'); return; }
+  try {
+    await fetch(`/api/call/start/${sessionId}`, { method: 'POST' });
+  } catch(e) { console.error(e); }
+  // The expert page is the sole live client — we only flip the session to live
+  // and hand off; we do NOT open a monitor WebSocket here (single-connection).
+  window.open(`/expert?session=${sessionId}`, '_blank');
 }
 
 async function startMic() {
