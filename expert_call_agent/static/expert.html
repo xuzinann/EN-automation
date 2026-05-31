@@ -131,7 +131,7 @@ const VAD_SILENCE_MS = 800;         // trailing silence that ends an utterance
 const VAD_MIN_UTTERANCE_MS = 400;   // drop blips shorter than this
 const VAD_MAX_UTTERANCE_MS = 20000; // force-cut a long monologue
 let micAnalyser = null, vadInterval = null, vadBuf = null;
-let segmentStart = 0, lastVoice = 0, sawSpeech = false, segmentValid = false, peakRms = 0;
+let segmentStart = 0, lastVoice = 0, sawSpeech = false, segmentValid = false;
 
 const forcedSession = new URLSearchParams(location.search).get('session');
 const $ = id => document.getElementById(id);
@@ -280,13 +280,12 @@ function startSegment(){
   segmentStart = performance.now();
   lastVoice = segmentStart;
   sawSpeech = false;
-  peakRms = 0;
   segmentValid = false;
   if (micRecorder && micRecorder.state === 'inactive') micRecorder.start(); // no timeslice → one blob at stop()
 }
 
 // End the current segment; ondataavailable decides whether to actually send it.
-function endSegment(reason){
+function endSegment(){
   const dur = performance.now() - segmentStart;
   segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
   if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop → startSegment()
@@ -300,10 +299,9 @@ function vadTick(){
   for (let i = 0; i < vadBuf.length; i++){ const v = (vadBuf[i] - 128) / 128; sum += v * v; }
   const rms = Math.sqrt(sum / vadBuf.length);
   const now = performance.now();
-  if (rms > peakRms) peakRms = rms;
   if (rms >= VAD_SILENCE_RMS){ sawSpeech = true; lastVoice = now; }
-  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment('pause');
-  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment('max-length');
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment();
+  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment();
 }
 
 // Tear down the mic + VAD without touching the WS or the state line.
