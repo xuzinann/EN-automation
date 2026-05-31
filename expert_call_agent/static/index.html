@@ -1020,8 +1020,49 @@ async function loadContextFile(path) {
   }
 }
 
+async function autoPreload() {
+  setStatus('upload-status', 'Auto-loading context...', true);
+  try {
+    const resp = await fetch('/api/precall/context-files');
+    const data = await resp.json();
+    if (!data.files.length) {
+      setStatus('upload-status', 'No context files to preload.');
+      return;
+    }
+    const file = data.files[0];
+    const fileResp = await fetch(file.path);
+    const text = await fileResp.text();
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const form = new FormData();
+    form.append('file', new File([blob], file.filename));
+
+    const uploadResp = await fetch('/api/precall/upload-brief', { method: 'POST', body: form });
+    const uploadData = await uploadResp.json();
+    sessionId = uploadData.session_id;
+    document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    currentContext = uploadData.project_context;
+    renderContext(uploadData.project_context);
+    setStatus('upload-status', 'Context loaded.');
+    document.getElementById('btn-guide').disabled = false;
+
+    setStatus('guide-status', 'Auto-generating call guide...', true);
+    const guideResp = await fetch(`/api/precall/generate-guide/${sessionId}`, { method: 'POST' });
+    const guideData = await guideResp.json();
+    currentGuide = guideData.call_guide;
+    renderGuide(guideData.call_guide);
+    setStatus('guide-status', 'Call guide ready.');
+    document.getElementById('btn-start-call').disabled = false;
+    document.getElementById('btn-demo').disabled = false;
+    const expertBtn = document.getElementById('btn-expert-call');
+    if (expertBtn) expertBtn.disabled = false;
+  } catch(e) {
+    setStatus('upload-status', 'Preload error: ' + e.message);
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   loadContextLibrary();
+  autoPreload();
 });
 
 function markdownToHtml(md) {
