@@ -79,3 +79,8 @@ LIVE_DEDUP_JACCARD = 0.8
 # on the stable topic label instead. Set False to disable; the per-type cap
 # (LIVE_FLAG_CAPS) remains the final hard bound on total contradictions surfaced.
 LIVE_CONTRADICTION_TOPIC_DEDUP = True
+
+# Seconds to wait after the expert joins a live call before the agent speaks its
+# opening turn — lets the page render, the audio context unlock, and the mic spin
+# up so the greeting isn't clipped. Set to 0 to disable the delay.
+LIVE_OPENING_DELAY_SECONDS = 2.0
