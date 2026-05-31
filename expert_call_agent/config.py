@@ -26,13 +26,16 @@ SPEECH_LANGUAGE_CODES = ["en-US"]
 # Per-agent (provider, model). BaseAgent._call_model / _call_model_text branch on
 # provider, and each agent's model is honored per call (ClaudeClient.generate(model=…)
 # / GeminiClient.generate(model=…)), so a swap here needs no other code edits.
-# All live + structured agents now run on Claude; only STT still uses Gemini Flash.
+# Live-loop agents (orchestrator, qa, followup, note_taker) run on Claude Haiku for
+# latency — they emit short, low-temperature output where Haiku is plenty. The
+# pre/post-call agents (ingestion, guide drafter, summarizer) stay on Sonnet for
+# quality since they're off the live critical path. STT still uses Gemini Flash.
 AGENT_MODELS = {
     "context_ingestion": ("claude", CLAUDE_MODEL),
     "call_guide_drafter": ("claude", CLAUDE_MODEL),
-    "orchestrator": ("claude", CLAUDE_MODEL),
-    "qa_agent": ("claude", CLAUDE_MODEL),
-    "followup_agent": ("claude", CLAUDE_MODEL),
+    "orchestrator": ("claude", CLAUDE_HAIKU_MODEL),
+    "qa_agent": ("claude", CLAUDE_HAIKU_MODEL),
+    "followup_agent": ("claude", CLAUDE_HAIKU_MODEL),
     "note_taker": ("claude", CLAUDE_HAIKU_MODEL),
     "post_call_summarizer": ("claude", CLAUDE_MODEL),
 }
@@ -50,6 +53,13 @@ GEMINI_HTTP_TIMEOUT_MS = 30000
 # Sampling temperature for the structured (JSON-emitting) live agents. Low =
 # stabler turn-to-turn output and more reliable parsing.
 STRUCTURED_TEMPERATURE = 0.2
+
+# Output-token ceiling for the live-loop agents (orchestrator, qa, followup,
+# note_taker). Claude latency scales with tokens generated, and these agents emit
+# short turns (one spoken question / a few structured flags / a few notes), so a
+# tight cap trims tail latency. Bump per-agent (BaseAgent.max_tokens) if a qa/
+# followup turn ever truncates and fails to parse.
+LIVE_AGENT_MAX_TOKENS = 512
 
 # Live-call flag priority: lower index = higher priority. FIFO breaks ties.
 FLAG_TIER_ORDER = ["contradiction", "must_ask", "probe", "should_ask", "nice_to_have"]

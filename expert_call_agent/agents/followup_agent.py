@@ -6,6 +6,7 @@ import config
 class FollowUpAgent(BaseAgent):
     name = "followup_agent"
     temperature = config.STRUCTURED_TEMPERATURE
+    max_tokens = config.LIVE_AGENT_MAX_TOKENS
     system_prompt = (
         "You monitor an expert call for coverage completeness. "
         "Track which interview guide sections have been addressed. "

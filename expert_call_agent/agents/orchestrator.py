@@ -13,6 +13,7 @@ _INTENT = {
 
 class OrchestratorAgent(BaseAgent):
     name = "orchestrator"
+    max_tokens = config.LIVE_AGENT_MAX_TOKENS
     system_prompt = (
         "You are the spoken voice of an AI interviewer on a live PE expert call. "
         "You receive the single next point to raise — already chosen for you — plus the recent "

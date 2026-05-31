@@ -8,6 +8,7 @@ _VALID_FLAGS = {"must_ask", "should_ask", "nice_to_have"}
 class QAAgent(BaseAgent):
     name = "qa_agent"
     temperature = config.STRUCTURED_TEMPERATURE
+    max_tokens = config.LIVE_AGENT_MAX_TOKENS
     system_prompt = (
         "You are the lead interviewer in a PE expert call. "
         "Given the interview guide and real-time transcript, suggest the best next "

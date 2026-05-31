@@ -6,6 +6,7 @@ import config
 class NoteTakerAgent(BaseAgent):
     name = "note_taker"
     temperature = config.STRUCTURED_TEMPERATURE
+    max_tokens = config.LIVE_AGENT_MAX_TOKENS
     system_prompt = (
         "Extract structured notes from an expert call transcript. "
         "Categorize each note:\n"

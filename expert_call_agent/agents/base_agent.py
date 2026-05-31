@@ -12,6 +12,7 @@ class BaseAgent(ABC):
     name: str
     system_prompt: str
     temperature: float | None = None  # subclasses override; None = provider default
+    max_tokens: int | None = None  # subclasses override; None = client default (4096)
 
     def __init__(self, gemini_client: GeminiClient, claude_client: ClaudeClient):
         self.gemini = gemini_client
@@ -35,6 +36,7 @@ class BaseAgent(ABC):
                 system=self.system_prompt,
                 temperature=self.temperature,
                 model=self.model_name,
+                **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
             )
 
     async def _call_model_text(self, user_prompt: str) -> str:
@@ -55,6 +57,7 @@ class BaseAgent(ABC):
             system=self.system_prompt,
             temperature=self.temperature,
             model=self.model_name,
+            **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
         )
 
     def _parse_json(self, text: str) -> dict | list:
