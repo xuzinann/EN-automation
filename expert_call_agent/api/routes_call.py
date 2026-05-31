@@ -68,6 +68,35 @@ async def speak(ws, app, session_id: str, utterance: str, *, agent_name: str,
         pass
 
 
+def _compose_opening(session) -> str:
+    """Build the agent's first spoken turn from the call guide.
+
+    opening_script (the greeting, already phrased for 'Shaun') followed by the
+    first available question: opening_questions -> first deep-dive question.
+    Returns "" if the guide has nothing to say (opening is then skipped).
+    """
+    guide = session.call_guide
+    if guide is None:
+        return ""
+
+    parts: list[str] = []
+    if guide.opening_script:
+        parts.append(guide.opening_script.strip())
+
+    first_q = ""
+    if guide.opening_questions:
+        first_q = (guide.opening_questions[0].text or "").strip()
+    else:
+        for sec in guide.deep_dive_sections:
+            if sec.questions:
+                first_q = (sec.questions[0].text or "").strip()
+                break
+    if first_q:
+        parts.append(first_q)
+
+    return " ".join(p for p in parts if p).strip()
+
+
 @router.post("/start/{session_id}")
 async def start_call(request: Request, session_id: str):
     sessions = request.app.state.sessions
@@ -118,6 +147,22 @@ async def call_websocket(ws: WebSocket, session_id: str):
 
         # On reconnect, don't re-extract notes for transcript entries already recorded.
         note_taker.seed_processed(len(session.transcript))
+
+        # Proactive opening: if this is a fresh live call (no interviewer turn yet),
+        # the agent greets and asks the first question before the expert speaks.
+        # The "no interviewer turn" guard is idempotent across reconnects.
+        session = await sessions.get_session(session_id)
+        already_opened = any(e.speaker == "interviewer" for e in session.transcript)
+        if session.status == "live" and session.call_guide and not already_opened:
+            opening = _compose_opening(session)
+            if opening:
+                await asyncio.sleep(config.LIVE_OPENING_DELAY_SECONDS)
+                await speak(
+                    ws, app, session_id, opening,
+                    agent_name="orchestrator",
+                    flag_type="opening",
+                    rationale="Opening the call",
+                )
 
         async def process_entry(entry: TranscriptEntry):
             await sessions.add_transcript_entry(session_id, entry)
