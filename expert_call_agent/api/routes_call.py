@@ -38,6 +38,36 @@ async def _run_agent(coro):
     return await asyncio.wait_for(coro, timeout=config.AGENT_TIMEOUT_SECONDS)
 
 
+async def speak(ws, app, session_id: str, utterance: str, *, agent_name: str,
+                flag_type: str, rationale: str) -> None:
+    """Emit one agent turn: ai_turn event, interviewer transcript entry, TTS audio.
+
+    Shared by the reactive turn loop (process_entry) and the proactive opening so
+    both produce an identical client-facing sequence.
+    """
+    sessions = app.state.sessions
+    await ws.send_json({
+        "type": "ai_turn",
+        "question": utterance,
+        "agent": agent_name,
+        "flag_type": flag_type,
+        "rationale": rationale,
+    })
+
+    ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
+    await sessions.add_transcript_entry(session_id, ai_entry)
+    await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
+
+    try:
+        audio_bytes = await app.state.tts.synthesize(utterance)
+        await ws.send_json({
+            "type": "tts_audio",
+            "data": base64.b64encode(audio_bytes).decode(),
+        })
+    except Exception:
+        pass
+
+
 @router.post("/start/{session_id}")
 async def start_call(request: Request, session_id: str):
     sessions = request.app.state.sessions
@@ -147,27 +177,13 @@ async def call_websocket(ws: WebSocket, session_id: str):
                 return
             utterance = utterance.strip()
 
-            await ws.send_json({
-                "type": "ai_turn",
-                "question": utterance,
-                "agent": selected.agent_name,
-                "flag_type": selected.flag_type,
-                "rationale": selected.metadata.get("rationale") or selected.metadata.get("reason", ""),
-            })
-
-            ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
-            await sessions.add_transcript_entry(session_id, ai_entry)
-            await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
-
-            # Auto-speak via TTS.
-            try:
-                audio_bytes = await app.state.tts.synthesize(utterance)
-                await ws.send_json({
-                    "type": "tts_audio",
-                    "data": base64.b64encode(audio_bytes).decode(),
-                })
-            except Exception:
-                pass
+            await speak(
+                ws, app, session_id, utterance,
+                agent_name=selected.agent_name,
+                flag_type=selected.flag_type,
+                rationale=selected.metadata.get("rationale")
+                or selected.metadata.get("reason", ""),
+            )
 
         while True:
             raw = await ws.receive()
