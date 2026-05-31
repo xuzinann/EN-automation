@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
 
     base_dir = Path(__file__).resolve().parent.parent
     app.mount("/sample_data", StaticFiles(directory=str(base_dir / "sample_data")), name="sample_data")
+    app.mount("/context", StaticFiles(directory=str(base_dir / "context")), name="context")
     app.mount("/", StaticFiles(directory=str(base_dir / "static"), html=True), name="static")
 
     return app

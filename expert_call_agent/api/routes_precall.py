@@ -1,9 +1,29 @@
+from pathlib import Path
+
 from fastapi import APIRouter, UploadFile, File, Request, HTTPException
 
 from agents.context_ingestion import ContextIngestionAgent
 from agents.call_guide_drafter import CallGuideDrafterAgent
 
 router = APIRouter()
+
+CONTEXT_DIR = Path(__file__).resolve().parent.parent / "context"
+
+
+@router.get("/context-files")
+async def list_context_files():
+    files = []
+    if CONTEXT_DIR.exists():
+        for f in sorted(CONTEXT_DIR.iterdir()):
+            if f.suffix in (".md", ".txt"):
+                size_kb = f.stat().st_size / 1024
+                files.append({
+                    "name": f.stem.replace("_", " ").replace("-", " ").title(),
+                    "filename": f.name,
+                    "path": f"/context/{f.name}",
+                    "size": f"{size_kb:.1f} KB",
+                })
+    return {"files": files}
 
 
 @router.post("/upload-brief")

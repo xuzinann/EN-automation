@@ -104,6 +104,9 @@
       <div class="status-msg" id="guide-status"></div>
       <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
       <button class="btn-outline" id="btn-sample" onclick="useSampleBrief()">Use Sample Brief</button>
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
+      <div style="font-size:12px; font-weight:600; text-transform:uppercase; color:#666; margin-bottom:8px;">Context Library</div>
+      <div id="context-library"></div>
     </div>
     <div class="context-panel">
       <h3>Project Context</h3>
@@ -431,6 +434,53 @@ async function generateSummary() {
 async function exportSession() {
   window.open(`/api/postcall/export/${sessionId}`, '_blank');
 }
+
+async function loadContextLibrary() {
+  try {
+    const resp = await fetch('/api/precall/context-files');
+    const data = await resp.json();
+    const lib = document.getElementById('context-library');
+    if (!data.files.length) {
+      lib.innerHTML = '<p style="color:#999; font-size:12px;">No context files found.</p>';
+      return;
+    }
+    lib.innerHTML = data.files.map(f =>
+      `<button class="btn-outline" style="width:100%; text-align:left; margin-bottom:6px; font-size:12px; padding:8px 12px;" onclick="loadContextFile('${f.path}')">
+        <strong>${f.name}</strong><br>
+        <span style="color:#666; font-size:11px;">${f.size}</span>
+      </button>`
+    ).join('');
+  } catch(e) {
+    console.error('Failed to load context library:', e);
+  }
+}
+
+async function loadContextFile(path) {
+  setStatus('upload-status', 'Loading context file...', true);
+  try {
+    const resp = await fetch(path);
+    const text = await resp.text();
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const filename = path.split('/').pop();
+    const file = new File([blob], filename);
+    const form = new FormData();
+    form.append('file', file);
+
+    const result = await fetch('/api/precall/upload-brief', { method: 'POST', body: form });
+    const data = await result.json();
+    sessionId = data.session_id;
+    document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    renderContext(data.project_context);
+    setStatus('upload-status', 'Context file analyzed.');
+    document.getElementById('btn-guide').disabled = false;
+  } catch(e) {
+    setStatus('upload-status', 'Error: ' + e.message);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadContextLibrary();
+});
 
 function markdownToHtml(md) {
   return md
