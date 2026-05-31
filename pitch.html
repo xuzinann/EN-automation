@@ -214,6 +214,7 @@
   .node small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; margin-top: 2px; }
   .node.pulse { border-color: var(--cyan); box-shadow: 0 0 24px rgba(34, 211, 238, 0.4); transform: translateY(-3px); }
   .node.queue { border-color: var(--violet); }
+  .node.guide { border-color: var(--pink); }
   .arrow { color: var(--muted); font-size: 20px; }
   .fan { display: flex; flex-direction: column; gap: 8px; }
   @media (max-width: 760px) { .flow { flex-direction: column; } .arrow { transform: rotate(90deg); } }
@@ -264,6 +265,26 @@
   .out-with b { color: var(--green); font-weight: 700; }
   .pctbadge { display: inline-block; margin-top: 18px; padding: 8px 16px; border-radius: 999px; background: rgba(52,227,164,0.12); border: 1px solid rgba(52,227,164,0.3); color: var(--green); font-weight: 700; font-family: "Space Grotesk"; }
 
+  /* TAM / market */
+  .tam-bars { display: flex; flex-direction: column; gap: 18px; margin-bottom: 44px; }
+  .tam-bar .tam-fill { border-radius: 16px; padding: 24px 28px; display: flex; align-items: center; min-height: 78px; }
+  .tam-bar.tam .tam-fill { background: linear-gradient(120deg, rgba(34,211,238,0.18), rgba(168,85,247,0.18)); border: 1px solid var(--card-brd); }
+  .tam-bar.sam .tam-fill { background: linear-gradient(120deg, rgba(34,211,238,0.3), rgba(129,140,248,0.3)); border: 1px solid var(--card-brd); }
+  .tam-bar.som .tam-fill { background: var(--grad); }
+  .tam-fill > div { display: flex; align-items: baseline; gap: 14px; }
+  .tam-k { font-family: var(--mono); font-size: 13px; letter-spacing: 0.12em; color: var(--muted); }
+  .tam-bar.som .tam-k { color: rgba(6,6,11,0.65); }
+  .tam-v { font-family: "Space Grotesk"; font-weight: 700; font-size: clamp(28px, 5vw, 44px); }
+  .tam-bar.som .tam-v { color: #06060b; }
+  .tam-desc { font-size: 14px; color: var(--muted); margin-top: 11px; padding-left: 4px; }
+  .tam-logic { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .tam-logic { grid-template-columns: 1fr; } }
+  .tlc { padding: 26px; border-radius: 18px; background: var(--card); border: 1px solid var(--card-brd); }
+  .tlc h4 { font-family: "Space Grotesk"; font-size: 18px; margin-bottom: 10px; }
+  .tlc p { font-size: 15px; color: var(--muted); }
+  .tlc b { color: var(--text); font-weight: 700; }
+  .tam-src { font-size: 12px; color: var(--muted); margin-top: 24px; opacity: 0.7; line-height: 1.5; }
+
   /* before/after */
   .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 10px; }
   @media (max-width: 760px) { .ba { grid-template-columns: 1fr; } }
@@ -306,6 +327,7 @@
       <a href="#solution">Solution</a>
       <a href="#how">How it works</a>
       <a href="#roi">ROI</a>
+      <a href="#market">Market</a>
     </div>
     <a href="#roi" class="nav-cta">Calculate savings</a>
   </div>
@@ -325,7 +347,7 @@
     <div class="burn reveal">
       <div class="label">Burned on a single 3-week project</div>
       <div class="num warm-text" id="heroBurn">$0</div>
-      <div class="foot">60 calls · 2 senior consultants each · ~6 person-hours/call · $300/hr</div>
+      <div class="foot">1 guide draft + 60 calls · 2 consultants · 1 hr each · $400/hr</div>
     </div>
   </div>
 </header>
@@ -341,7 +363,7 @@
       <div class="stat reveal"><div class="v grad-text">60</div><div class="k">calls per project</div></div>
       <div class="stat reveal"><div class="v grad-text">3</div><div class="k">weeks, back-to-back</div></div>
       <div class="stat reveal"><div class="v grad-text">2</div><div class="k">people on every call</div></div>
-      <div class="stat reveal"><div class="v grad-text">$300</div><div class="k">per hour, each</div></div>
+      <div class="stat reveal"><div class="v grad-text">$400</div><div class="k">per hour, each</div></div>
     </div>
 
     <div class="manual reveal">
@@ -349,30 +371,34 @@
         <div class="emoji">🎙️</div>
         <h4>The Interviewer</h4>
         <p>Preps the guide, runs the live call, thinks on their feet, chases follow-ups and contradictions in real time.</p>
-        <span class="tag">~3 hrs / call · $300/hr</span>
+        <span class="tag">1 hr call · $400/hr</span>
       </div>
       <div class="person">
         <div class="emoji">✍️</div>
         <h4>The Note-taker</h4>
-        <p>Scrambles to capture every data point during the call, then spends hours afterward structuring notes and writing the summary deliverable.</p>
-        <span class="tag">~3 hrs / call · $300/hr</span>
+        <p>Scrambles to capture every data point during the call, and still has to write up the full summary deliverable afterward.</p>
+        <span class="tag">1 hr call · $400/hr</span>
       </div>
     </div>
 
     <div class="calc-row reveal">
-      <span class="chip">60 calls</span>
-      <span class="op">×</span>
-      <span class="chip">6 person-hrs</span>
-      <span class="op">×</span>
-      <span class="chip">$300/hr</span>
+      <span class="chip">2-hr guide draft</span>
+      <span class="op">+</span>
+      <span class="chip">60 calls × 2 people × 1 hr</span>
       <span class="op">=</span>
-      <span class="chip eq" style="color:var(--red)">$108,000</span>
+      <span class="chip">122 senior-hrs</span>
+      <span class="op">×</span>
+      <span class="chip">$400</span>
+      <span class="op">=</span>
+      <span class="chip eq" style="color:var(--red)">$48,800</span>
     </div>
 
+    <p class="section-lead reveal" style="text-align:center; margin:18px auto 0; max-width:540px;">And that's <b>before</b> the hours of post-call write-up — we're only counting prep and the calls themselves.</p>
+
     <div class="annual reveal">
-      <div class="section-lead" style="margin:0 auto 6px; text-align:center;">A firm running 20 of these projects a year is quietly burning</div>
+      <div class="section-lead" style="margin:0 auto 6px; text-align:center;">A firm running 200 of these projects a year is quietly burning</div>
       <div class="big warm-text" id="annualBurn">$0</div>
-      <div class="section-lead" style="margin:6px auto 0; text-align:center;">— and <b>7,200 hours of senior time</b> — on work an agent can do.</div>
+      <div class="section-lead" style="margin:6px auto 0; text-align:center;">— and <b>24,400 hours of senior time</b> — on work an agent can do.</div>
     </div>
   </div>
 </section>
@@ -417,22 +443,24 @@
 
     <!-- animated live pipeline -->
     <div class="pipeline reveal">
-      <h3>Inside the live call</h3>
-      <div class="ptag">Agents <em>flag</em> · deterministic queue <em>decides</em> · the responder <em>speaks</em></div>
+      <h3>One agent runs the whole engagement</h3>
+      <div class="ptag">Drafts the guide <em>before</em> · flags, decides &amp; speaks <em>during</em> — no humans on the line</div>
       <div class="flow" id="flow">
-        <div class="node" data-step="0"><span class="ic">🎧</span>Expert audio<small>real-time</small></div>
+        <div class="node guide" data-step="0"><span class="ic">📋</span>Guide draft<small>pre-call</small></div>
+        <span class="arrow">⇒</span>
+        <div class="node" data-step="1"><span class="ic">🎧</span>Expert audio<small>real-time</small></div>
         <span class="arrow">→</span>
-        <div class="node" data-step="1"><span class="ic">📝</span>STT<small>Gemini Flash</small></div>
+        <div class="node" data-step="2"><span class="ic">📝</span>STT<small>Gemini Flash</small></div>
         <span class="arrow">→</span>
         <div class="fan">
-          <div class="node" data-step="2"><span class="ic">❓</span>QA<small>next question</small></div>
-          <div class="node" data-step="2"><span class="ic">🔍</span>Follow-up<small>probe / contradiction</small></div>
-          <div class="node" data-step="2"><span class="ic">🗂️</span>Note-taker<small>passive</small></div>
+          <div class="node" data-step="3"><span class="ic">❓</span>QA<small>next question</small></div>
+          <div class="node" data-step="3"><span class="ic">🔍</span>Follow-up<small>probe / contradiction</small></div>
+          <div class="node" data-step="3"><span class="ic">🗂️</span>Note-taker<small>passive</small></div>
         </div>
         <span class="arrow">→</span>
-        <div class="node queue" data-step="3"><span class="ic">⚖️</span>Priority queue<small>deterministic</small></div>
+        <div class="node queue" data-step="4"><span class="ic">⚖️</span>Priority queue<small>deterministic</small></div>
         <span class="arrow">→</span>
-        <div class="node" data-step="4"><span class="ic">🔊</span>Responder + TTS<small>speaks to expert</small></div>
+        <div class="node" data-step="5"><span class="ic">🔊</span>Responder + TTS<small>speaks to expert</small></div>
       </div>
     </div>
   </div>
@@ -472,28 +500,72 @@
           <input type="range" id="sCalls" min="5" max="150" value="60" step="1" />
         </div>
         <div class="slider-field">
-          <div class="top"><label>Person-hours per call</label><span class="val" id="vHours">6</span></div>
-          <input type="range" id="sHours" min="2" max="10" value="6" step="0.5" />
+          <div class="top"><label>Hours per call <span style="opacity:.6">(× 2 people)</span></label><span class="val" id="vHours">1</span></div>
+          <input type="range" id="sHours" min="0.5" max="3" value="1" step="0.5" />
         </div>
         <div class="slider-field">
-          <div class="top"><label>Blended hourly rate</label><span class="val" id="vRate">$300</span></div>
-          <input type="range" id="sRate" min="100" max="600" value="300" step="25" />
+          <div class="top"><label>Blended hourly rate</label><span class="val" id="vRate">$400</span></div>
+          <input type="range" id="sRate" min="100" max="600" value="400" step="25" />
         </div>
         <div class="slider-field" style="margin-bottom:0">
-          <div class="top"><label>Projects per year</label><span class="val" id="vProj">20</span></div>
-          <input type="range" id="sProj" min="1" max="60" value="20" step="1" />
+          <div class="top"><label>Projects per year</label><span class="val" id="vProj">200</span></div>
+          <input type="range" id="sProj" min="10" max="400" value="200" step="10" />
         </div>
+        <p style="font-size:12px; color:var(--muted); margin-top:22px; opacity:.8;">Manual cost = 2 people per call + a one-time 2-hr call-guide draft per project. HTTP 418 automates all of it.</p>
       </div>
       <div class="calc-output">
         <div class="out-label">Manual cost / project</div>
-        <div class="out-manual" id="oManual">$108,000</div>
+        <div class="out-manual" id="oManual">$48,800</div>
         <div class="out-label">You save / project</div>
-        <div class="out-savings grad-text" id="oSavings">$102,780</div>
-        <div class="out-with">With HTTP 418: <b id="oWith">$5,220</b> <span style="color:var(--muted)">(light human QA + compute)</span></div>
-        <div><span class="pctbadge" id="oPct">95% cheaper</span></div>
-        <div class="out-with" style="margin-top:24px; padding-top:20px; border-top:1px solid var(--card-brd);">Across the year, that's <b id="oAnnual">$2.06M</b> back on the table.</div>
+        <div class="out-savings grad-text" id="oSavings">$42,080</div>
+        <div class="out-with">With HTTP 418: <b id="oWith">$6,720</b> <span style="color:var(--muted)">(light human QA + compute)</span></div>
+        <div><span class="pctbadge" id="oPct">86% cheaper</span></div>
+        <div class="out-with" style="margin-top:24px; padding-top:20px; border-top:1px solid var(--card-brd);">Across the year, that's <b id="oAnnual">$8.42M</b> back on the table.</div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- TAM / MARKET -->
+<section id="market">
+  <div class="wrap">
+    <div class="eyebrow violet reveal">The opportunity</div>
+    <h2 class="section-title reveal">A <span class="grad-text">$10B market</span> hiding inside consulting payroll.</h2>
+    <p class="section-lead reveal">This isn't the expert-network <em>fee</em> market — it's the senior-consultant <b>labor</b> spent conducting and writing up those calls. The line item nobody has automated. Until now.</p>
+
+    <div class="tam-bars">
+      <div class="tam-bar tam reveal">
+        <div class="tam-fill" style="width:100%">
+          <div><span class="tam-k">TAM</span><span class="tam-v grad-text">$10B</span></div>
+        </div>
+        <div class="tam-desc">Global senior-consultant labor spent running &amp; synthesizing expert / diligence interviews, every year.</div>
+      </div>
+      <div class="tam-bar sam reveal">
+        <div class="tam-fill" style="width:64%">
+          <div><span class="tam-k">SAM</span><span class="tam-v">$3.5B</span></div>
+        </div>
+        <div class="tam-desc">PE &amp; strategy due-diligence across North America &amp; Europe — English-first, call-heavy, fastest to adopt.</div>
+      </div>
+      <div class="tam-bar som reveal">
+        <div class="tam-fill" style="width:34%">
+          <div><span class="tam-k">SOM</span><span class="tam-v">$100M</span></div>
+        </div>
+        <div class="tam-desc">Realistic 3-year capture as we land design-partner firms and expand seat by seat.</div>
+      </div>
+    </div>
+
+    <div class="tam-logic">
+      <div class="tlc reveal">
+        <h4>📐 Bottoms-up</h4>
+        <p>~<b>1,000</b> diligence-heavy firms (PE, strategy, hedge funds) × <b>200</b> projects/yr × <b>~$49K</b> of prep + interview labor each ≈ <b class="grad-text">$10B</b>.</p>
+      </div>
+      <div class="tlc reveal">
+        <h4>🔭 Top-down cross-check</h4>
+        <p>The expert-network industry is ~<b>$2B</b> in fees. Firms burn several dollars of senior labor for every fee dollar — a ~<b>5×</b> multiple lands near <b class="grad-text">$10B</b>.</p>
+      </div>
+    </div>
+
+    <p class="tam-src reveal">Sources: expert-network industry ~$1.5B in 2020 (Integrity Research, via Wikipedia) → ~$2B today; firm counts and per-project labor from the model above. Figures are directional estimates for market sizing.</p>
   </div>
 </section>
 
@@ -511,7 +583,7 @@
           <li>Summaries written hours later, from memory</li>
           <li>Missed follow-ups &amp; contradictions, no second chance</li>
           <li>Calls bottlenecked by who's available</li>
-          <li>~$108K and 360 hours per project</li>
+          <li>~$49K of senior time per project — guide prep + calls</li>
         </ul>
       </div>
       <div class="ba-col after reveal">
@@ -522,7 +594,7 @@
           <li>Deliverable ready the moment the call ends</li>
           <li>Contradictions flagged and probed in real time</li>
           <li>Run calls in parallel, any time zone</li>
-          <li>~95% cheaper, hours of senior time freed</li>
+          <li>~86% cheaper, every senior hour freed</li>
         </ul>
       </div>
     </div>
@@ -533,8 +605,8 @@
 <section>
   <div class="wrap">
     <div class="cta reveal">
-      <h2>Stop paying $300/hr to <span class="grad-text">take notes.</span></h2>
-      <p>HTTP 418 turns a two-person, six-figure grind into one autonomous agent — and hands you a better deliverable.</p>
+      <h2>Stop paying $400/hr to <span class="grad-text">take notes.</span></h2>
+      <p>HTTP 418 turns a two-person grind into one autonomous agent — and hands you a better deliverable.</p>
       <div class="btn-row">
         <a href="#roi" class="btn btn-primary">Calculate your savings →</a>
         <a href="#solution" class="btn btn-ghost">See the architecture</a>
@@ -578,7 +650,7 @@
 
       if (e.target.id === "problem" && !fired.has("annual")) {
         fired.add("annual");
-        animateValue(document.getElementById("annualBurn"), 108000 * 20, { prefix: "$", fmt: v => (v/1e6).toFixed(2) + "M" });
+        animateValue(document.getElementById("annualBurn"), 48800 * 200, { prefix: "$", fmt: v => (v/1e6).toFixed(2) + "M" });
       }
       io.unobserve(e.target);
     });
@@ -588,7 +660,7 @@
 
   // hero burn count-up on load
   window.addEventListener("load", () => {
-    animateValue(document.getElementById("heroBurn"), 108000, { prefix: "$" });
+    animateValue(document.getElementById("heroBurn"), 48800, { prefix: "$" });
   });
 
   // ---------- animated pipeline pulse ----------
@@ -598,6 +670,7 @@
     ['[data-step="2"]'],
     ['[data-step="3"]'],
     ['[data-step="4"]'],
+    ['[data-step="5"]'],
   ];
   let si = 0;
   setInterval(() => {
@@ -612,6 +685,8 @@
   const sRate  = document.getElementById("sRate");
   const sProj  = document.getElementById("sProj");
 
+  const PEOPLE = 2;             // people on every manual call
+  const GUIDE_HRS = 2;          // 1 consultant drafts the call guide, once per project
   const OVERSIGHT_HRS = 0.25;   // light human QA per call
   const COMPUTE_PER_CALL = 12;  // API / compute $ per call
 
@@ -628,7 +703,7 @@
     document.getElementById("vRate").textContent  = "$" + rate;
     document.getElementById("vProj").textContent  = proj;
 
-    const manual = calls * hours * rate;
+    const manual = calls * hours * PEOPLE * rate + GUIDE_HRS * rate;
     const withUs = calls * (OVERSIGHT_HRS * rate + COMPUTE_PER_CALL);
     const savings = manual - withUs;
     const pct = manual > 0 ? Math.round((savings / manual) * 100) : 0;
