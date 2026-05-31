@@ -34,12 +34,14 @@ class NoteTakerAgent(BaseAgent):
         self._last_processed = count
 
     async def run(self, session: CallSession, **kwargs) -> list[AgentAction]:
-        new_entries = session.transcript[self._last_processed:]
-        self._last_processed = len(session.transcript)
+        processed_through = len(session.transcript)
+        new_entries = session.transcript[self._last_processed:processed_through]
 
         # Only extract facts from the expert — never from the AI's own questions.
         expert_entries = [e for e in new_entries if e.speaker == "expert"]
         if not expert_entries:
+            # Nothing to extract (e.g. interviewer-only turns); skip them.
+            self._last_processed = processed_through
             self._latest_notes = []
             return []
 
@@ -49,6 +51,10 @@ class NoteTakerAgent(BaseAgent):
             f"Extract structured notes from these new transcript entries:\n\n{transcript}"
         )
         response = await self._call_model(prompt)
+        # Advance the watermark only after a successful call, so a timed-out or
+        # failed extraction retries these entries next turn instead of dropping
+        # their notes silently.
+        self._last_processed = processed_through
         parsed = self._safe_parse_json(response, [])
 
         notes_list = parsed if isinstance(parsed, list) else parsed.get("notes", [])
