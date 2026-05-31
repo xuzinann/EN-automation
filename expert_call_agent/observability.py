@@ -5,6 +5,18 @@ without a W&B account. Set WEAVE_DISABLED=1 to turn tracing off even when weave
 is installed (e.g. when you have no WANDB_API_KEY).
 """
 import os
+from pathlib import Path
+
+# Load expert_call_agent/.env (if python-dotenv is available) so WANDB_API_KEY /
+# WEAVE_PROJECT can live in a gitignored .env instead of the shell. Explicit path
+# keeps it cwd-independent, and load_dotenv does NOT override vars already set in
+# the environment (so an inline WANDB_API_KEY=... still wins). Best-effort: any
+# failure just means env must come from the shell.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except Exception:
+    pass
 
 try:
     import weave

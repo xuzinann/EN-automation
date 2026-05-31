@@ -7,3 +7,4 @@ google-genai>=2.7.0
 google-auth>=2.53.0
 aiofiles>=24.0
 weave>=0.51.0
+python-dotenv>=1.0.0
