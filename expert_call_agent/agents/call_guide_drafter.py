@@ -10,12 +10,12 @@ class CallGuideDrafterAgent(BaseAgent):
         "Return ONLY valid JSON with these fields:\n"
         "{\n"
         '  "opening_script": "A natural spoken opening for the interviewer. '
-        "Format: 'Hi, I am [Interviewer Name], and I am from a next-gen consulting firm. "
+        "Format: 'Hi, I am Shaun, and I am from a next-gen consulting firm. "
         "We are doing a market study on the [industry/space from the context], "
         "and thanks so much for joining the call today. "
         "Before we dive in, [brief context on what we hope to learn].' "
         "Fill in the bracketed parts using the project context. "
-        'Keep the interviewer name as [Interviewer Name] as a placeholder.",\n'
+        'Keep the interviewer name as Shaun as a placeholder.",\n'
         '  "opening_questions": [{"text": "string", "rationale": "string", '
         '"priority": "must_ask|should_ask|nice_to_have", "target_data": ["strings"]}],\n'
         '  "deep_dive_sections": [{"topic": "string", "questions": [same format], '
