@@ -66,10 +66,16 @@ class LiveCallQueue:
         return cap is not None and self._asked_counts.get(flag_type, 0) >= cap
 
     def _contradiction_topic(self, action: AgentAction) -> str:
-        """Normalized canonical topic for a contradiction; '' for any other flag."""
+        """Normalized canonical topic for a contradiction; '' for any other flag.
+
+        Coerces non-string topics (the LLM can emit a year, list, etc. despite the
+        slug instruction) so a malformed value degrades to a harmless slug instead
+        of crashing the unguarded enqueue path.
+        """
         if action.flag_type != "contradiction" or not action.metadata:
             return ""
-        return _normalize(action.metadata.get("topic", ""))
+        topic = action.metadata.get("topic", "")
+        return _normalize(topic if isinstance(topic, str) else str(topic))
 
     def _is_duplicate(self, key: str, key_tokens: set[str]) -> bool:
         if key in self._asked:
