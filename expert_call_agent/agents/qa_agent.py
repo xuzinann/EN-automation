@@ -2,6 +2,8 @@ from agents.base_agent import BaseAgent
 from models import CallSession, AgentAction
 import config
 
+_VALID_FLAGS = {"must_ask", "should_ask", "nice_to_have"}
+
 
 class QAAgent(BaseAgent):
     name = "qa_agent"
@@ -12,7 +14,9 @@ class QAAgent(BaseAgent):
         "questions already answered, and probe deeper when answers are vague.\n\n"
         "Return ONLY valid JSON:\n"
         '{"question": "the question to ask", "rationale": "why this question now", '
-        '"guide_section": "which section this addresses"}\n'
+        '"guide_section": "which section this addresses", '
+        '"priority": "must_ask|should_ask|nice_to_have"}\n'
+        "Set priority from the guide question's own priority (default should_ask).\n"
         "No markdown fences or commentary."
     )
 
@@ -29,9 +33,14 @@ class QAAgent(BaseAgent):
         response = await self._call_model(prompt)
         parsed = self._parse_json(response)
 
+        flag_type = parsed.get("priority", "should_ask")
+        if flag_type not in _VALID_FLAGS:
+            flag_type = "should_ask"
+
         return AgentAction(
             agent_name=self.name,
             action_type="suggest_question",
+            flag_type=flag_type,
             content=parsed.get("question", response),
             priority=0.8,
             metadata={
