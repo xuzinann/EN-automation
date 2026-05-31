@@ -3,6 +3,29 @@
 **Date:** 2026-05-31
 **Status:** Approved (design); implementation pending
 **Scope:** Update `expert_call_agent_architecture.md` + write this spec. No code yet.
+**Code baseline:** reconciled against `main` @ `d204c1f` (after the context-library,
+UI-redesign, and context-extraction commits landed).
+
+---
+
+## 0. Current Code Baseline
+
+The file-by-file plan below targets this state of `main`:
+
+- `models.py` — `ProjectContext` now carries `study_type`, `num_calls`, `call_targets`.
+  `AgentAction` is unchanged (no `flag_type` yet — this spec adds it).
+- `api/routes_call.py` — live WS loop intact; uses the LLM `OrchestratorAgent` selector and a
+  manual `ask_question` path. Demo content (`DEMO_EXPERT_RESPONSES`) is now a **CoreWeave** GPU-cloud
+  scenario.
+- `api/routes_precall.py` / `api/app.py` — added a **context library**: `/api/precall/context-files`
+  lists `context/*.md`, mounted at `/context`. Pre-call is otherwise unchanged and **out of scope**
+  for this refactor.
+- `agents/context_ingestion.py` — richer extraction prompt (deal stage enum, study type, N, call
+  targets). Pre-call, out of scope.
+- `static/index.html` — redesigned three-phase UI. Live call is **human-in-the-loop**: an "Agent
+  Suggestions" panel renders `suggested_question` cards with an **"Ask This"** button that fires the
+  `ask_question` WS message; `playAudio()` already auto-plays `tts_audio`; a live **Key Takeaways**
+  subsection is fed by the (to-be-deleted) live summarizer.
 
 ---
 
@@ -107,6 +130,9 @@ with. The `AgentAction.priority` float is retained to make this drop-in later.
   or add `asked: bool` to `AgentAction` if we keep flags around. **Decision: queue-held set**, to
   avoid mutating stored actions.
 - `CoverageStatus` and `StructuredNote` unchanged.
+- `ProjectContext` already carries `study_type`, `num_calls`, `call_targets` (from the
+  context-library work) — no change needed; the merged summarizer may reference `study_type` for
+  framing. `CallSession.key_takeaways` stays, but is now populated only at post-call.
 
 ### 4.5 Edge cases
 
@@ -148,7 +174,7 @@ It consumes the full transcript, accumulated notes, and project context. Replace
 
 | File | Change |
 |------|--------|
-| `models.py` | Add `flag_type` to `AgentAction`; keep `priority`. |
+| `models.py` | Add `flag_type` to `AgentAction`; keep `priority`. `ProjectContext` unchanged. |
 | `config.py` | Remove `summarizer` from `AGENT_MODELS`; keep `orchestrator` (Gemini Flash, new role); add a `FLAG_TIER_ORDER` constant. |
 | `live_orchestration.py` *(new)* | Deterministic priority queue: enqueue, tier-order, FIFO tiebreak, dedup-asked, pop. Pure code, no I/O. |
 | `agents/orchestrator.py` | Rewrite selector → responder: input = one flag + recent transcript; output = utterance string. New system prompt for natural, conversational phrasing. |
@@ -156,10 +182,28 @@ It consumes the full transcript, accumulated notes, and project context. Replace
 | `agents/followup_agent.py` | Emit `contradiction` (tier 1) and `probe` (tier 3) flags; keep coverage status output. |
 | `agents/note_taker.py` | Unchanged (passive). |
 | `agents/summarizer.py` | **Delete.** |
-| `agents/post_call_summarizer.py` | Extend to emit structured takeaways + markdown in one call. |
-| `api/routes_call.py` | Rewrite WS loop: parallel flaggers + note-taker → deterministic queue → responder → auto-TTS each turn. Remove LLM-orchestrator selection and the manual `ask_question` approval path. Keep `run_demo`. |
-| `api/routes_postcall.py` | Call merged summarizer; return takeaways + summary. |
-| `static/index.html` | Autonomous mode: show AI turns, auto-play TTS audio, drop manual approve. Keep transcript/notes/coverage/takeaways panels. |
+| `agents/post_call_summarizer.py` | Extend to emit structured takeaways + markdown in one call; persist takeaways to `session.key_takeaways`. |
+| `api/routes_call.py` | Rewrite WS loop: drop the `KeyTakeawaySummarizerAgent` import/usage; parallel `qa`+`followup`+`note_taker` → deterministic queue → responder → emit `transcript`(interviewer) + `tts_audio` + `ai_turn` each turn. Remove the LLM-orchestrator `suggested_question` emit and the manual `ask_question` handler. Keep `text_input`, audio-bytes, and `run_demo` (CoreWeave demo) paths. |
+| `api/routes_postcall.py` | Call merged summarizer; return `{summary, takeaways}`. |
+| `static/index.html` | Autonomous mode: repurpose "Agent Suggestions" panel → **AI Interviewer monitor** (render `ai_turn`: composed question + driving agent/`flag_type`/rationale); remove the "Ask This" button, `askQuestion()`, and the `ask_question` send. Keep `playAudio()`/`tts_audio` auto-play, `addTranscript`, `addNote`, `updateCoverage`. Remove the **live** Key Takeaways subsection; render takeaways in the post-call summary panel instead. |
+
+### 7.1 WebSocket message contract (autonomous live call)
+
+Per expert turn, the backend emits, in order:
+
+1. `{"type": "transcript", "entry": {speaker: "expert", ...}}` — the expert's STT'd turn.
+2. `{"type": "note", "note": {...}}` (0..N) — from the Note-taker.
+3. `{"type": "coverage_update", "coverage": [...]}` — from the Follow-up agent (if present).
+4. If the queue selected a flag:
+   - `{"type": "ai_turn", "question": "...", "agent": "...", "flag_type": "...", "rationale": "..."}`
+     — drives the monitor panel.
+   - `{"type": "transcript", "entry": {speaker: "interviewer", ...}}` — the composed utterance.
+   - `{"type": "tts_audio", "data": "<b64 mp3>"}` — auto-played by the existing `playAudio()`.
+5. If the queue was empty: no `ai_turn`/`tts_audio` (the AI stays silent).
+
+**Removed:** `suggested_question` (replaced by `ai_turn`) and the inbound `ask_question` message
+(autonomous mode no longer needs human approval). `key_takeaways` is no longer sent during the
+live call — takeaways arrive via the post-call `summarize` response.
 
 ## 8. Testing Strategy
 
@@ -168,9 +212,12 @@ It consumes the full transcript, accumulated notes, and project context. Replace
 - **Flag emission (unit, mocked models):** QA emits correct `flag_type` per guide priority;
   Follow-up emits contradiction + probe flags.
 - **Responder (unit, mocked):** given one flag, produces a non-empty utterance referencing it.
-- **Integration:** run `DEMO_EXPERT_RESPONSES` through the loop with mocked model outputs; assert
-  the deterministic selection order matches the tier hierarchy.
-- **Post-call:** summarizer returns both structured takeaways and markdown.
+- **Integration:** run the current CoreWeave `DEMO_EXPERT_RESPONSES` through the loop with mocked
+  model outputs; assert the deterministic selection order matches the tier hierarchy and that the
+  emitted WS messages follow the §7.1 contract (`ai_turn` + interviewer `transcript` + `tts_audio`,
+  or silence on empty queue).
+- **Post-call:** summarizer returns both structured takeaways and markdown, and writes takeaways to
+  `session.key_takeaways`.
 
 ## 9. Risks & Mitigations
 
