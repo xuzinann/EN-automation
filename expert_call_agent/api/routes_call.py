@@ -8,9 +8,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPExce
 from agents.qa_agent import QAAgent
 from agents.followup_agent import FollowUpAgent
 from agents.note_taker import NoteTakerAgent
-from agents.summarizer import KeyTakeawaySummarizerAgent
 from agents.orchestrator import OrchestratorAgent
-from models import TranscriptEntry
+from live_orchestration import LiveCallQueue
+from models import TranscriptEntry, AgentAction
 
 router = APIRouter()
 
@@ -65,61 +65,84 @@ async def call_websocket(ws: WebSocket, session_id: str):
     qa = QAAgent(gemini, claude)
     followup = FollowUpAgent(gemini, claude)
     note_taker = NoteTakerAgent(gemini, claude)
-    summarizer = KeyTakeawaySummarizerAgent(gemini, claude)
     orchestrator = OrchestratorAgent(gemini, claude)
+    queue = LiveCallQueue()
 
     async def process_entry(entry: TranscriptEntry):
         await sessions.add_transcript_entry(session_id, entry)
         session = await sessions.get_session(session_id)
-
         await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
 
-        results = await asyncio.gather(
+        qa_result, fu_result, nt_result = await asyncio.gather(
             qa.run(session),
             followup.run(session),
             note_taker.run(session),
-            summarizer.run(session),
             return_exceptions=True,
         )
 
-        for result in results:
-            if isinstance(result, Exception):
-                await ws.send_json({"type": "error", "message": str(result)})
-                continue
-            actions = result if isinstance(result, list) else [result]
-            for action in actions:
-                await sessions.add_action(session_id, action)
+        # Note-taker (passive) — record notes, never queued.
+        if isinstance(nt_result, Exception):
+            await ws.send_json({"type": "error", "message": str(nt_result)})
+        else:
+            for note in note_taker.get_latest_notes():
+                await sessions.add_note(session_id, note)
+                await ws.send_json({"type": "note", "note": note.model_dump()})
 
-        for note in note_taker.get_latest_notes():
-            await sessions.add_note(session_id, note)
-            await ws.send_json({"type": "note", "note": note.model_dump()})
+        # Coverage status from the Follow-up agent.
+        if not isinstance(fu_result, Exception):
+            coverage = followup.get_latest_coverage()
+            if coverage:
+                await sessions.update_coverage(session_id, coverage)
+                await ws.send_json({
+                    "type": "coverage_update",
+                    "coverage": [c.model_dump() for c in coverage],
+                })
 
-        coverage = followup.get_latest_coverage()
-        if coverage:
-            await sessions.update_coverage(session_id, coverage)
-            await ws.send_json({
-                "type": "coverage_update",
-                "coverage": [c.model_dump() for c in coverage],
-            })
+        # Collect flags from QA + Follow-up.
+        flags: list[AgentAction] = []
+        if isinstance(qa_result, AgentAction):
+            flags.append(qa_result)
+        elif isinstance(qa_result, Exception):
+            await ws.send_json({"type": "error", "message": str(qa_result)})
+        if isinstance(fu_result, list):
+            flags.extend(fu_result)
+        elif isinstance(fu_result, Exception):
+            await ws.send_json({"type": "error", "message": str(fu_result)})
 
-        takeaways = summarizer.get_latest_takeaways()
-        if takeaways:
-            await sessions.update_takeaways(session_id, takeaways)
-            await ws.send_json({"type": "key_takeaways", "takeaways": takeaways})
+        # Deterministic selection.
+        queue.enqueue(flags)
+        selected = queue.select_next()
+        if selected is None:
+            return  # empty queue -> stay silent, let the expert continue
 
+        # Compose the spoken turn.
         session = await sessions.get_session(session_id)
-        orch_result = await orchestrator.run(session)
-        await sessions.pop_pending_actions(session_id)
+        utterance = await orchestrator.run(session, flag=selected)
+        if not utterance or not utterance.strip():
+            return
+        utterance = utterance.strip()
 
-        selected = orch_result.get("selected_action")
-        if selected:
+        await ws.send_json({
+            "type": "ai_turn",
+            "question": utterance,
+            "agent": selected.agent_name,
+            "flag_type": selected.flag_type,
+            "rationale": selected.metadata.get("rationale") or selected.metadata.get("reason", ""),
+        })
+
+        ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
+        await sessions.add_transcript_entry(session_id, ai_entry)
+        await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
+
+        # Auto-speak via TTS.
+        try:
+            audio_bytes = await app.state.tts.synthesize(utterance)
             await ws.send_json({
-                "type": "suggested_question",
-                "question": selected.get("content", ""),
-                "rationale": orch_result.get("reason", ""),
-                "agent": selected.get("agent_name", ""),
-                "action_type": selected.get("action_type", ""),
+                "type": "tts_audio",
+                "data": base64.b64encode(audio_bytes).decode(),
             })
+        except Exception:
+            pass
 
     try:
         while True:
@@ -149,19 +172,6 @@ async def call_websocket(ws: WebSocket, session_id: str):
                         text=data["text"],
                     )
                     await process_entry(entry)
-
-                elif data.get("type") == "ask_question":
-                    entry = TranscriptEntry(speaker="interviewer", text=data["question"])
-                    await sessions.add_transcript_entry(session_id, entry)
-                    await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
-
-                    tts = app.state.tts
-                    try:
-                        audio_bytes = await tts.synthesize(data["question"])
-                        audio_b64 = base64.b64encode(audio_bytes).decode()
-                        await ws.send_json({"type": "tts_audio", "data": audio_b64})
-                    except Exception:
-                        pass
 
                 elif data.get("type") == "run_demo":
                     for i, expert_text in enumerate(DEMO_EXPERT_RESPONSES):
