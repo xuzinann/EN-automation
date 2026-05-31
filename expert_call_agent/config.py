@@ -61,3 +61,12 @@ LIVE_COOLDOWN_EXEMPT_TIERS = {"contradiction", "must_ask"}
 # Near-duplicate suppression: a candidate flag whose token-set Jaccard overlap
 # with an already-asked or still-pending flag is >= this is treated as a duplicate.
 LIVE_DEDUP_JACCARD = 0.8
+
+# Contradiction repeat-suppression (identity-based, approach A). A contradiction
+# whose canonical `topic` (set by the Follow-up agent) was already raised — or is
+# already pending — is dropped, regardless of how its wording varies. This is the
+# deterministic backstop to the agent's own semantic self-suppression. Token
+# similarity can't tell a reworded repeat from a distinct contradiction, so we key
+# on the stable topic label instead. Set False to disable; the per-type cap
+# (LIVE_FLAG_CAPS) remains the final hard bound on total contradictions surfaced.
+LIVE_CONTRADICTION_TOPIC_DEDUP = True

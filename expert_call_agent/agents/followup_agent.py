@@ -71,7 +71,12 @@ class FollowUpAgent(BaseAgent):
                     f"{contradiction.get('claim', '')} vs "
                     f"{contradiction.get('conflicts_with', '')}. Could you clarify?"
                 ),
-                metadata={"reason": "contradiction with known data"},
+                metadata={
+                    "reason": "contradiction with known data",
+                    "topic": contradiction.get("topic", ""),
+                    "claim": contradiction.get("claim", ""),
+                    "conflicts_with": contradiction.get("conflicts_with", ""),
+                },
             ))
 
         self._latest_coverage = [

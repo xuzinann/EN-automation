@@ -49,6 +49,7 @@ class LiveCallQueue:
         self._seq = 0
         self._turn = 0
         self._last_spoke_turn = -(10 ** 9)
+        self._asked_topics: set[str] = set()  # contradiction topics already raised
 
     def tick(self) -> None:
         """Advance the turn counter; call once per processed expert entry."""
@@ -63,6 +64,12 @@ class LiveCallQueue:
     def _at_cap(self, flag_type: str) -> bool:
         cap = config.LIVE_FLAG_CAPS.get(flag_type)
         return cap is not None and self._asked_counts.get(flag_type, 0) >= cap
+
+    def _contradiction_topic(self, action: AgentAction) -> str:
+        """Normalized canonical topic for a contradiction; '' for any other flag."""
+        if action.flag_type != "contradiction" or not action.metadata:
+            return ""
+        return _normalize(action.metadata.get("topic", ""))
 
     def _is_duplicate(self, key: str, key_tokens: set[str]) -> bool:
         if key in self._asked:
@@ -86,6 +93,13 @@ class LiveCallQueue:
             key_tokens = _tokens(action.content)
             if self._is_duplicate(key, key_tokens):
                 continue
+            if config.LIVE_CONTRADICTION_TOPIC_DEDUP:
+                topic = self._contradiction_topic(action)
+                if topic and (
+                    topic in self._asked_topics
+                    or any(self._contradiction_topic(a) == topic for _, _, a in self._pending)
+                ):
+                    continue  # same contradiction topic already raised or pending
             self._pending.append((self._seq, self._turn, action))
             self._seq += 1
 
@@ -123,5 +137,8 @@ class LiveCallQueue:
         self._asked_counts[action.flag_type] = (
             self._asked_counts.get(action.flag_type, 0) + 1
         )
+        topic = self._contradiction_topic(action)
+        if topic:
+            self._asked_topics.add(topic)
         self._last_spoke_turn = self._turn
         return action
