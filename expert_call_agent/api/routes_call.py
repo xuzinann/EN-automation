@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import json
-import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException
 
@@ -11,6 +10,7 @@ from agents.note_taker import NoteTakerAgent
 from agents.orchestrator import OrchestratorAgent
 from live_orchestration import LiveCallQueue
 from models import TranscriptEntry, AgentAction
+import config
 
 router = APIRouter()
 
@@ -26,6 +26,16 @@ DEMO_EXPERT_RESPONSES = [
     "The B200 Blackwell transition is going to reshuffle the market. The power draw per GPU is significantly higher — roughly 1,000 watts per chip versus 700 for H100. So every data center needs to be re-evaluated for power and cooling capacity. Companies that built facilities optimized for H100 density may need significant retrofits. This is where having newer facilities with flexible power and liquid cooling infrastructure gives you an advantage.",
     "Looking ahead, I think the market will consolidate around four or five major players. The hyperscalers — AWS, Azure, GCP — will always be there. CoreWeave has the scale and NVIDIA relationship to be the leading independent. Then you'll have one or two specialists surviving in niches — maybe Crusoe on the energy cost side, or Cerebras if their wafer-scale approach gains traction for specific workloads. The mid-tier players like Voltage Park and Applied Digital will either get acquired or struggle to compete on both price and performance.",
 ]
+
+
+def _err(exc: Exception) -> str:
+    msg = str(exc)
+    return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
+
+
+async def _run_agent(coro):
+    """Run a live-call agent with a hard timeout so a hung LLM call can't stall the loop."""
+    return await asyncio.wait_for(coro, timeout=config.AGENT_TIMEOUT_SECONDS)
 
 
 @router.post("/start/{session_id}")
@@ -62,89 +72,103 @@ async def call_websocket(ws: WebSocket, session_id: str):
         await ws.close()
         return
 
-    qa = QAAgent(gemini, claude)
-    followup = FollowUpAgent(gemini, claude)
-    note_taker = NoteTakerAgent(gemini, claude)
-    orchestrator = OrchestratorAgent(gemini, claude)
-    queue = LiveCallQueue()
-
-    async def process_entry(entry: TranscriptEntry):
-        await sessions.add_transcript_entry(session_id, entry)
-        session = await sessions.get_session(session_id)
-        await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
-
-        qa_result, fu_result, nt_result = await asyncio.gather(
-            qa.run(session),
-            followup.run(session),
-            note_taker.run(session),
-            return_exceptions=True,
-        )
-
-        # Note-taker (passive) — record notes, never queued.
-        if isinstance(nt_result, Exception):
-            await ws.send_json({"type": "error", "message": str(nt_result)})
-        else:
-            for note in note_taker.get_latest_notes():
-                await sessions.add_note(session_id, note)
-                await ws.send_json({"type": "note", "note": note.model_dump()})
-
-        # Coverage status from the Follow-up agent.
-        if not isinstance(fu_result, Exception):
-            coverage = followup.get_latest_coverage()
-            if coverage:
-                await sessions.update_coverage(session_id, coverage)
-                await ws.send_json({
-                    "type": "coverage_update",
-                    "coverage": [c.model_dump() for c in coverage],
-                })
-
-        # Collect flags from QA + Follow-up.
-        flags: list[AgentAction] = []
-        if isinstance(qa_result, AgentAction):
-            flags.append(qa_result)
-        elif isinstance(qa_result, Exception):
-            await ws.send_json({"type": "error", "message": str(qa_result)})
-        if isinstance(fu_result, list):
-            flags.extend(fu_result)
-        elif isinstance(fu_result, Exception):
-            await ws.send_json({"type": "error", "message": str(fu_result)})
-
-        # Deterministic selection.
-        queue.enqueue(flags)
-        selected = queue.select_next()
-        if selected is None:
-            return  # empty queue -> stay silent, let the expert continue
-
-        # Compose the spoken turn.
-        session = await sessions.get_session(session_id)
-        utterance = await orchestrator.run(session, flag=selected)
-        if not utterance or not utterance.strip():
-            return
-        utterance = utterance.strip()
-
-        await ws.send_json({
-            "type": "ai_turn",
-            "question": utterance,
-            "agent": selected.agent_name,
-            "flag_type": selected.flag_type,
-            "rationale": selected.metadata.get("rationale") or selected.metadata.get("reason", ""),
-        })
-
-        ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
-        await sessions.add_transcript_entry(session_id, ai_entry)
-        await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
-
-        # Auto-speak via TTS.
-        try:
-            audio_bytes = await app.state.tts.synthesize(utterance)
-            await ws.send_json({
-                "type": "tts_audio",
-                "data": base64.b64encode(audio_bytes).decode(),
-            })
-        except Exception:
-            pass
+    # One live connection per session: a reconnect / second tab must not run a
+    # parallel loop against shared session state.
+    if not await sessions.acquire_call(session_id):
+        await ws.send_json({"type": "error", "message": "Call already active for this session"})
+        await ws.close()
+        return
 
     try:
+        qa = QAAgent(gemini, claude)
+        followup = FollowUpAgent(gemini, claude)
+        note_taker = NoteTakerAgent(gemini, claude)
+        orchestrator = OrchestratorAgent(gemini, claude)
+        queue = LiveCallQueue()
+
+        # On reconnect, don't re-extract notes for transcript entries already recorded.
+        note_taker.seed_processed(len(session.transcript))
+
+        async def process_entry(entry: TranscriptEntry):
+            await sessions.add_transcript_entry(session_id, entry)
+            session = await sessions.get_session(session_id)
+            await ws.send_json({"type": "transcript", "entry": entry.model_dump()})
+
+            qa_result, fu_result, nt_result = await asyncio.gather(
+                _run_agent(qa.run(session)),
+                _run_agent(followup.run(session)),
+                _run_agent(note_taker.run(session)),
+                return_exceptions=True,
+            )
+
+            # Note-taker (passive) — record notes, never queued.
+            if isinstance(nt_result, Exception):
+                await ws.send_json({"type": "error", "message": _err(nt_result)})
+            else:
+                for note in note_taker.get_latest_notes():
+                    await sessions.add_note(session_id, note)
+                    await ws.send_json({"type": "note", "note": note.model_dump()})
+
+            # Coverage status from the Follow-up agent.
+            if isinstance(fu_result, Exception):
+                await ws.send_json({"type": "error", "message": _err(fu_result)})
+            else:
+                coverage = followup.get_latest_coverage()
+                if coverage:
+                    await sessions.update_coverage(session_id, coverage)
+                    await ws.send_json({
+                        "type": "coverage_update",
+                        "coverage": [c.model_dump() for c in coverage],
+                    })
+
+            # Collect flags from QA + Follow-up.
+            flags: list[AgentAction] = []
+            if isinstance(qa_result, AgentAction):
+                flags.append(qa_result)
+            elif isinstance(qa_result, Exception):
+                await ws.send_json({"type": "error", "message": _err(qa_result)})
+            if isinstance(fu_result, list):
+                flags.extend(fu_result)
+
+            # Deterministic selection.
+            queue.tick()
+            queue.enqueue(flags)
+            selected = queue.select_next()
+            if selected is None:
+                return  # nothing worth raising -> stay silent
+
+            # Compose the spoken turn.
+            try:
+                utterance = await _run_agent(orchestrator.run(session, flag=selected))
+            except Exception as e:
+                await ws.send_json({"type": "error", "message": _err(e)})
+                return
+            if not utterance or not utterance.strip():
+                return
+            utterance = utterance.strip()
+
+            await ws.send_json({
+                "type": "ai_turn",
+                "question": utterance,
+                "agent": selected.agent_name,
+                "flag_type": selected.flag_type,
+                "rationale": selected.metadata.get("rationale") or selected.metadata.get("reason", ""),
+            })
+
+            ai_entry = TranscriptEntry(speaker="interviewer", text=utterance)
+            await sessions.add_transcript_entry(session_id, ai_entry)
+            await ws.send_json({"type": "transcript", "entry": ai_entry.model_dump()})
+
+            # Auto-speak via TTS.
+            try:
+                audio_bytes = await app.state.tts.synthesize(utterance)
+                await ws.send_json({
+                    "type": "tts_audio",
+                    "data": base64.b64encode(audio_bytes).decode(),
+                })
+            except Exception:
+                pass
+
         while True:
             raw = await ws.receive()
             if raw.get("type") == "websocket.disconnect":
@@ -161,7 +185,7 @@ async def call_websocket(ws: WebSocket, session_id: str):
                         entry = TranscriptEntry(speaker="expert", text=text)
                         await process_entry(entry)
                 except Exception as e:
-                    await ws.send_json({"type": "error", "message": f"STT: {e}"})
+                    await ws.send_json({"type": "error", "message": f"STT: {_err(e)}"})
 
             elif "text" in raw:
                 data = json.loads(raw["text"])
@@ -188,3 +212,5 @@ async def call_websocket(ws: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         pass
+    finally:
+        await sessions.release_call(session_id)
