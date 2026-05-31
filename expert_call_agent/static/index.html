@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expert Call Virtual Agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+
+  header { background: #1a1a2e; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 20px; font-weight: 600; }
+  #session-badge { background: #16213e; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-family: monospace; }
+
+  .phase { padding: 20px 24px; border-bottom: 1px solid #ddd; }
+  .phase-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 14px; }
+
+  .precall-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+  .upload-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .upload-panel h3 { font-size: 15px; margin-bottom: 12px; }
+  .context-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); max-height: 500px; overflow-y: auto; }
+
+  .call-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .call-panel { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); max-height: 500px; overflow-y: auto; }
+  .call-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #333; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+
+  .transcript-entry { padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+  .transcript-entry .speaker { font-weight: 600; color: #1a1a2e; text-transform: uppercase; font-size: 11px; }
+  .transcript-entry.expert .speaker { color: #0d47a1; }
+  .transcript-entry.interviewer .speaker { color: #2e7d32; }
+
+  .suggestion-card { background: #e3f2fd; border-radius: 6px; padding: 12px; margin-bottom: 10px; }
+  .suggestion-card .question { font-weight: 500; margin-bottom: 6px; }
+  .suggestion-card .rationale { font-size: 12px; color: #555; }
+  .suggestion-card .agent-tag { font-size: 11px; background: #bbdefb; padding: 2px 8px; border-radius: 3px; display: inline-block; margin-bottom: 6px; }
+
+  .note-entry { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+  .note-entry .category { font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; display: inline-block; margin-bottom: 2px; }
+  .cat-headcount { background: #e8f5e9; color: #2e7d32; }
+  .cat-org_structure { background: #e3f2fd; color: #0d47a1; }
+  .cat-market { background: #fff3e0; color: #e65100; }
+  .cat-operations { background: #f3e5f5; color: #6a1b9a; }
+  .cat-financials { background: #fce4ec; color: #b71c1c; }
+  .cat-quote { background: #f5f5f5; color: #333; font-style: italic; }
+  .cat-other { background: #eceff1; color: #455a64; }
+
+  .coverage-bar { margin: 6px 0; }
+  .coverage-bar .label { font-size: 12px; font-weight: 500; }
+  .coverage-track { height: 6px; background: #e0e0e0; border-radius: 3px; margin-top: 3px; }
+  .coverage-fill { height: 100%; background: #4caf50; border-radius: 3px; transition: width .3s; }
+
+  .takeaway-item { padding: 4px 0; font-size: 13px; border-bottom: 1px solid #f5f5f5; }
+
+  .text-input-row { display: flex; gap: 8px; margin-top: 10px; }
+  .text-input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+
+  .controls { padding: 16px 24px; display: flex; gap: 10px; align-items: center; }
+
+  button { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .2s; }
+  .btn-primary { background: #1a1a2e; color: white; }
+  .btn-primary:hover { background: #16213e; }
+  .btn-primary:disabled { background: #999; cursor: not-allowed; }
+  .btn-success { background: #2e7d32; color: white; }
+  .btn-success:hover { background: #1b5e20; }
+  .btn-danger { background: #c62828; color: white; }
+  .btn-danger:hover { background: #b71c1c; }
+  .btn-outline { background: white; color: #1a1a2e; border: 1px solid #1a1a2e; }
+  .btn-outline:hover { background: #f5f5f5; }
+
+  .status-msg { font-size: 13px; color: #666; padding: 4px 0; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #1a1a2e; border-radius: 50%; animation: spin .6s linear infinite; margin-right: 6px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .hidden { display: none; }
+
+  .summary-panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .summary-panel h3 { margin-bottom: 12px; }
+  .summary-content { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+  .summary-content h1, .summary-content h2, .summary-content h3 { margin-top: 16px; margin-bottom: 8px; }
+  .summary-content ul, .summary-content ol { padding-left: 20px; }
+
+  #demo-progress { font-size: 13px; color: #0d47a1; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Expert Call Virtual Agent</h1>
+  <div id="session-badge">No session</div>
+</header>
+
+<!-- PRE-CALL PHASE -->
+<div class="phase" id="phase-precall">
+  <div class="phase-title">Phase 1: Pre-Call Preparation</div>
+  <div class="precall-grid">
+    <div class="upload-panel">
+      <h3>Upload Project Brief</h3>
+      <input type="file" id="brief-file" accept=".md,.txt" style="margin-bottom:10px; font-size:13px;">
+      <br>
+      <button class="btn-primary" id="btn-upload" onclick="uploadBrief()">Upload & Analyze</button>
+      <div class="status-msg" id="upload-status"></div>
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
+      <button class="btn-primary" id="btn-guide" onclick="generateGuide()" disabled>Generate Call Guide</button>
+      <div class="status-msg" id="guide-status"></div>
+      <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
+      <button class="btn-outline" id="btn-sample" onclick="useSampleBrief()">Use Sample Brief</button>
+    </div>
+    <div class="context-panel">
+      <h3>Project Context</h3>
+      <div id="context-display"><p style="color:#999; font-size:13px;">Upload a brief to see extracted context here.</p></div>
+      <div id="guide-display" class="hidden" style="margin-top:16px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- LIVE CALL PHASE -->
+<div class="phase" id="phase-call">
+  <div class="phase-title">Phase 2: Live Call</div>
+  <div class="controls">
+    <button class="btn-success" id="btn-start-call" onclick="startCall()" disabled>Start Call</button>
+    <button class="btn-danger" id="btn-end-call" onclick="endCall()" disabled>End Call</button>
+    <button class="btn-outline" id="btn-demo" onclick="runDemo()" disabled>Run Demo Simulation</button>
+    <span id="demo-progress"></span>
+  </div>
+  <div class="call-grid">
+    <div class="call-panel" id="transcript-panel">
+      <h3>Transcript</h3>
+      <div id="transcript-list"></div>
+      <div class="text-input-row">
+        <input type="text" id="expert-input" placeholder="Type expert response..." onkeydown="if(event.key==='Enter')sendExpertText()">
+        <button class="btn-primary" onclick="sendExpertText()">Send</button>
+      </div>
+    </div>
+    <div class="call-panel" id="suggestions-panel">
+      <h3>Agent Suggestions</h3>
+      <div id="suggestions-list"><p style="color:#999; font-size:13px;">Suggestions will appear here during the call.</p></div>
+    </div>
+    <div class="call-panel" id="notes-panel">
+      <h3>Notes & Takeaways</h3>
+      <div id="coverage-section"></div>
+      <div style="margin-top:10px;">
+        <strong style="font-size:12px; text-transform:uppercase; color:#666;">Notes</strong>
+        <div id="notes-list"></div>
+      </div>
+      <div style="margin-top:10px;">
+        <strong style="font-size:12px; text-transform:uppercase; color:#666;">Key Takeaways</strong>
+        <div id="takeaways-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- POST-CALL PHASE -->
+<div class="phase" id="phase-postcall">
+  <div class="phase-title">Phase 3: Post-Call Summary</div>
+  <div class="controls">
+    <button class="btn-primary" id="btn-summarize" onclick="generateSummary()" disabled>Generate Summary</button>
+    <button class="btn-outline" id="btn-export" onclick="exportSession()" disabled>Export JSON</button>
+    <div class="status-msg" id="summary-status"></div>
+  </div>
+  <div class="summary-panel hidden" id="summary-panel">
+    <h3>Call Summary</h3>
+    <div class="summary-content" id="summary-content"></div>
+  </div>
+</div>
+
+<script>
+let sessionId = null;
+let ws = null;
+
+function setStatus(id, msg, loading=false) {
+  const el = document.getElementById(id);
+  el.innerHTML = (loading ? '<span class="spinner"></span>' : '') + msg;
+}
+
+async function uploadBrief() {
+  const file = document.getElementById('brief-file').files[0];
+  if (!file) { alert('Select a file first'); return; }
+
+  setStatus('upload-status', 'Analyzing brief...', true);
+  document.getElementById('btn-upload').disabled = true;
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const resp = await fetch('/api/precall/upload-brief', { method: 'POST', body: form });
+    const data = await resp.json();
+    sessionId = data.session_id;
+    document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    renderContext(data.project_context);
+    setStatus('upload-status', 'Context extracted successfully.');
+    document.getElementById('btn-guide').disabled = false;
+  } catch(e) {
+    setStatus('upload-status', 'Error: ' + e.message);
+  }
+  document.getElementById('btn-upload').disabled = false;
+}
+
+async function useSampleBrief() {
+  setStatus('upload-status', 'Loading sample brief...', true);
+  try {
+    const resp = await fetch('/sample_data/sample_brief.md');
+    const text = await resp.text();
+    const blob = new Blob([text], { type: 'text/markdown' });
+    const file = new File([blob], 'sample_brief.md');
+    const form = new FormData();
+    form.append('file', file);
+
+    const result = await fetch('/api/precall/upload-brief', { method: 'POST', body: form });
+    const data = await result.json();
+    sessionId = data.session_id;
+    document.getElementById('session-badge').textContent = `Session: ${sessionId}`;
+    renderContext(data.project_context);
+    setStatus('upload-status', 'Sample brief analyzed.');
+    document.getElementById('btn-guide').disabled = false;
+  } catch(e) {
+    setStatus('upload-status', 'Error: ' + e.message);
+  }
+}
+
+function renderContext(ctx) {
+  let html = `<strong>${ctx.company_name}</strong> — ${ctx.industry} (${ctx.deal_type})<br><br>`;
+  html += `<strong>Hypotheses:</strong><ul>${ctx.key_hypotheses.map(h => `<li>${h}</li>`).join('')}</ul>`;
+  html += `<strong>Gaps to Fill:</strong><ul>${ctx.gaps_to_fill.map(g => `<li>${g}</li>`).join('')}</ul>`;
+  if (ctx.key_entities.length) {
+    html += `<strong>Key Entities:</strong><ul>${ctx.key_entities.map(e => `<li>${e.name} — ${e.role}</li>`).join('')}</ul>`;
+  }
+  html += `<strong>Expert Profile:</strong> ${ctx.expert_profile}`;
+  document.getElementById('context-display').innerHTML = html;
+}
+
+async function generateGuide() {
+  setStatus('guide-status', 'Generating call guide...', true);
+  document.getElementById('btn-guide').disabled = true;
+
+  try {
+    const resp = await fetch(`/api/precall/generate-guide/${sessionId}`, { method: 'POST' });
+    const data = await resp.json();
+    renderGuide(data.call_guide);
+    setStatus('guide-status', 'Call guide ready.');
+    document.getElementById('btn-start-call').disabled = false;
+    document.getElementById('btn-demo').disabled = false;
+  } catch(e) {
+    setStatus('guide-status', 'Error: ' + e.message);
+  }
+  document.getElementById('btn-guide').disabled = false;
+}
+
+function renderGuide(guide) {
+  const el = document.getElementById('guide-display');
+  el.classList.remove('hidden');
+
+  let html = '<h3 style="margin-top:16px;">Interview Guide</h3>';
+
+  if (guide.opening_questions?.length) {
+    html += '<strong>Opening:</strong><ul>';
+    guide.opening_questions.forEach(q => { html += `<li><strong>${q.text}</strong><br><em style="font-size:12px; color:#666;">${q.rationale}</em></li>`; });
+    html += '</ul>';
+  }
+
+  guide.deep_dive_sections?.forEach(section => {
+    html += `<strong>${section.topic}:</strong><ul>`;
+    section.questions?.forEach(q => {
+      const badge = q.priority === 'must_ask' ? '🔴' : q.priority === 'should_ask' ? '🟡' : '⚪';
+      html += `<li>${badge} <strong>${q.text}</strong><br><em style="font-size:12px; color:#666;">${q.rationale}</em></li>`;
+    });
+    html += '</ul>';
+  });
+
+  if (guide.red_flag_probes?.length) {
+    html += '<strong>Red Flag Probes:</strong><ul>';
+    guide.red_flag_probes.forEach(q => { html += `<li>⚠️ ${q.text}</li>`; });
+    html += '</ul>';
+  }
+
+  el.innerHTML = html;
+}
+
+async function startCall() {
+  try {
+    await fetch(`/api/call/start/${sessionId}`, { method: 'POST' });
+  } catch(e) { console.error(e); }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/api/call/ws/${sessionId}`);
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    handleWSMessage(msg);
+  };
+
+  ws.onclose = () => { console.log('WebSocket closed'); };
+
+  document.getElementById('btn-start-call').disabled = true;
+  document.getElementById('btn-end-call').disabled = false;
+  document.getElementById('btn-demo').disabled = false;
+}
+
+function handleWSMessage(msg) {
+  switch(msg.type) {
+    case 'transcript':
+      addTranscript(msg.entry);
+      break;
+    case 'suggested_question':
+      addSuggestion(msg);
+      break;
+    case 'note':
+      addNote(msg.note);
+      break;
+    case 'coverage_update':
+      updateCoverage(msg.coverage);
+      break;
+    case 'key_takeaways':
+      updateTakeaways(msg.takeaways);
+      break;
+    case 'tts_audio':
+      playAudio(msg.data);
+      break;
+    case 'demo_progress':
+      document.getElementById('demo-progress').textContent = `Processing ${msg.current}/${msg.total}...`;
+      break;
+    case 'demo_complete':
+      document.getElementById('demo-progress').textContent = 'Demo complete!';
+      document.getElementById('btn-summarize').disabled = false;
+      document.getElementById('btn-export').disabled = false;
+      break;
+    case 'error':
+      console.error('Agent error:', msg.message);
+      break;
+  }
+}
+
+function addTranscript(entry) {
+  const list = document.getElementById('transcript-list');
+  const div = document.createElement('div');
+  div.className = `transcript-entry ${entry.speaker}`;
+  div.innerHTML = `<span class="speaker">${entry.speaker}</span>: ${entry.text}`;
+  list.appendChild(div);
+  list.parentElement.scrollTop = list.parentElement.scrollHeight;
+}
+
+function addSuggestion(msg) {
+  const list = document.getElementById('suggestions-list');
+  if (list.querySelector('p')) list.innerHTML = '';
+
+  const card = document.createElement('div');
+  card.className = 'suggestion-card';
+  card.innerHTML = `
+    <div class="agent-tag">${msg.agent || 'agent'} — ${msg.action_type || 'question'}</div>
+    <div class="question">${msg.question}</div>
+    <div class="rationale">${msg.rationale || ''}</div>
+    <button class="btn-outline" style="margin-top:6px; font-size:12px;" onclick="askQuestion('${msg.question.replace(/'/g, "\\'")}')">Ask This</button>
+  `;
+  list.insertBefore(card, list.firstChild);
+}
+
+function addNote(note) {
+  const list = document.getElementById('notes-list');
+  const div = document.createElement('div');
+  div.className = 'note-entry';
+  const cat = note.category || 'other';
+  div.innerHTML = `<span class="category cat-${cat}">${cat}</span> ${note.content}`;
+  list.appendChild(div);
+}
+
+function updateCoverage(coverage) {
+  const section = document.getElementById('coverage-section');
+  let html = '<strong style="font-size:12px; text-transform:uppercase; color:#666;">Coverage</strong>';
+  coverage.forEach(c => {
+    const pct = Math.round(c.covered_pct * 100);
+    html += `<div class="coverage-bar">
+      <div class="label">${c.section}: ${pct}%</div>
+      <div class="coverage-track"><div class="coverage-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  });
+  section.innerHTML = html;
+}
+
+function updateTakeaways(takeaways) {
+  const list = document.getElementById('takeaways-list');
+  list.innerHTML = takeaways.map(t => `<div class="takeaway-item">• ${t}</div>`).join('');
+}
+
+function playAudio(b64) {
+  const audio = new Audio('data:audio/mp3;base64,' + b64);
+  audio.play().catch(e => console.log('Audio play blocked:', e));
+}
+
+function sendExpertText() {
+  const input = document.getElementById('expert-input');
+  if (!input.value.trim() || !ws) return;
+  ws.send(JSON.stringify({ type: 'text_input', text: input.value.trim(), speaker: 'expert' }));
+  input.value = '';
+}
+
+function askQuestion(q) {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'ask_question', question: q }));
+}
+
+function runDemo() {
+  if (!ws) { startCall(); setTimeout(() => { ws.send(JSON.stringify({ type: 'run_demo' })); }, 1000); }
+  else { ws.send(JSON.stringify({ type: 'run_demo' })); }
+  document.getElementById('btn-demo').disabled = true;
+}
+
+async function endCall() {
+  try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e) {}
+  if (ws) { ws.close(); ws = null; }
+  document.getElementById('btn-end-call').disabled = true;
+  document.getElementById('btn-summarize').disabled = false;
+  document.getElementById('btn-export').disabled = false;
+}
+
+async function generateSummary() {
+  setStatus('summary-status', 'Generating post-call summary...', true);
+  document.getElementById('btn-summarize').disabled = true;
+
+  try {
+    const resp = await fetch(`/api/postcall/summarize/${sessionId}`, { method: 'POST' });
+    const data = await resp.json();
+    document.getElementById('summary-panel').classList.remove('hidden');
+    document.getElementById('summary-content').innerHTML = markdownToHtml(data.summary);
+    setStatus('summary-status', 'Summary generated.');
+  } catch(e) {
+    setStatus('summary-status', 'Error: ' + e.message);
+  }
+}
+
+async function exportSession() {
+  window.open(`/api/postcall/export/${sessionId}`, '_blank');
+}
+
+function markdownToHtml(md) {
+  return md
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    .replace(/\n{2,}/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
+</script>
+</body>
+</html>

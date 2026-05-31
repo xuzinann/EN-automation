@@ -1,0 +1,41 @@
+from agents.base_agent import BaseAgent
+from models import CallSession, AgentAction
+import config
+
+
+class QAAgent(BaseAgent):
+    name = "qa_agent"
+    system_prompt = (
+        "You are the lead interviewer in a PE expert call. "
+        "Given the interview guide and real-time transcript, suggest the best next "
+        "question to ask. Adapt based on what the expert has said — don't repeat "
+        "questions already answered, and probe deeper when answers are vague.\n\n"
+        "Return ONLY valid JSON:\n"
+        '{"question": "the question to ask", "rationale": "why this question now", '
+        '"guide_section": "which section this addresses"}\n'
+        "No markdown fences or commentary."
+    )
+
+    async def run(self, session: CallSession, **kwargs) -> AgentAction:
+        guide_json = session.call_guide.model_dump_json() if session.call_guide else "{}"
+        recent = session.transcript[-config.MAX_TRANSCRIPT_CONTEXT:]
+        transcript = "\n".join(f"[{e.speaker}] {e.text}" for e in recent)
+
+        prompt = (
+            f"Interview guide:\n{guide_json}\n\n"
+            f"Transcript so far:\n{transcript}\n\n"
+            "Suggest the single best next question to ask the expert."
+        )
+        response = await self._call_model(prompt)
+        parsed = self._parse_json(response)
+
+        return AgentAction(
+            agent_name=self.name,
+            action_type="suggest_question",
+            content=parsed.get("question", response),
+            priority=0.8,
+            metadata={
+                "rationale": parsed.get("rationale", ""),
+                "section": parsed.get("guide_section", ""),
+            },
+        )
