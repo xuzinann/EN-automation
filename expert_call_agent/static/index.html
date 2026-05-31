@@ -481,6 +481,13 @@ async function generateGuide() {
 function renderGuide(guide) {
   let html = '';
 
+  if (guide.opening_script) {
+    html += '<div class="guide-section">';
+    html += '<div class="guide-section-title" style="background:#e8f5e9;">Opening Script</div>';
+    html += `<div style="font-size:13px; line-height:1.6; padding:10px 12px; background:#f9fdf9; border-radius:4px; border-left:3px solid #4caf50; color:#333; font-style:italic;">${guide.opening_script}</div>`;
+    html += '</div>';
+  }
+
   if (guide.opening_questions?.length) {
     html += '<div class="guide-section">';
     html += '<div class="guide-section-title">Opening Questions</div>';

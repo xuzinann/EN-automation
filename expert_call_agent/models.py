@@ -45,6 +45,7 @@ class GuideSection(BaseModel):
 
 
 class CallGuide(BaseModel):
+    opening_script: str = ""
     opening_questions: list[Question] = []
     deep_dive_sections: list[GuideSection] = []
     red_flag_probes: list[Question] = []
