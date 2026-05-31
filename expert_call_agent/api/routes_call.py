@@ -129,9 +129,16 @@ async def call_websocket(ws: WebSocket, session_id: str):
 
             if "bytes" in raw:
                 audio = raw["bytes"]
-                text = await stt.transcribe(audio)
-                entry = TranscriptEntry(speaker="expert", text=text)
-                await process_entry(entry)
+                if len(audio) < 100:
+                    continue
+                try:
+                    text = await stt.transcribe(audio, mime_type="audio/webm")
+                    text = text.strip()
+                    if text:
+                        entry = TranscriptEntry(speaker="expert", text=text)
+                        await process_entry(entry)
+                except Exception as e:
+                    await ws.send_json({"type": "error", "message": f"STT: {e}"})
 
             elif "text" in raw:
                 data = json.loads(raw["text"])

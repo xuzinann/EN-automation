@@ -123,6 +123,20 @@
 
   #demo-progress { font-size: 13px; color: #0d47a1; font-weight: 500; }
 
+  .mic-controls { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eee; margin-bottom: 10px; }
+  .mic-btn { width: 36px; height: 36px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .2s; }
+  .mic-btn.idle { background: #2e7d32; color: white; }
+  .mic-btn.recording { background: #c62828; color: white; animation: pulse-mic 1.5s infinite; }
+  .mic-btn:disabled { background: #ccc; cursor: not-allowed; animation: none; }
+  @keyframes pulse-mic { 0%,100% { box-shadow: 0 0 0 0 rgba(198,40,40,.4); } 50% { box-shadow: 0 0 0 8px rgba(198,40,40,0); } }
+  .mic-status { font-size: 12px; color: #666; }
+  .mic-status.live { color: #c62828; font-weight: 600; }
+  .audio-level { width: 60px; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
+  .audio-level-fill { height: 100%; background: #4caf50; border-radius: 3px; transition: width .1s; width: 0%; }
+
+  .text-fallback { border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; }
+  .text-fallback summary { font-size: 11px; color: #999; cursor: pointer; }
+
   .save-toast { position: fixed; bottom: 24px; right: 24px; background: #2e7d32; color: white; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 100; }
   .save-toast.show { opacity: 1; }
 </style>
@@ -212,11 +226,21 @@
   <div class="call-grid">
     <div class="call-panel" id="transcript-panel">
       <h3>Transcript</h3>
-      <div id="transcript-list"></div>
-      <div class="text-input-row">
-        <input type="text" id="expert-input" placeholder="Type expert response..." onkeydown="if(event.key==='Enter')sendExpertText()">
-        <button class="btn-primary" onclick="sendExpertText()">Send</button>
+      <div class="mic-controls">
+        <button class="mic-btn idle" id="btn-mic" onclick="toggleMic()" disabled title="Toggle microphone">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+        </button>
+        <div class="audio-level"><div class="audio-level-fill" id="audio-level-fill"></div></div>
+        <span class="mic-status" id="mic-status">Mic off</span>
       </div>
+      <div id="transcript-list"></div>
+      <details class="text-fallback">
+        <summary>Text input (fallback)</summary>
+        <div class="text-input-row" style="margin-top:6px;">
+          <input type="text" id="expert-input" placeholder="Type expert response..." onkeydown="if(event.key==='Enter')sendExpertText()">
+          <button class="btn-primary" onclick="sendExpertText()">Send</button>
+        </div>
+      </details>
     </div>
     <div class="call-panel" id="suggestions-panel">
       <h3>Agent Suggestions</h3>
@@ -258,6 +282,13 @@ let sessionId = null;
 let ws = null;
 let currentContext = null;
 let currentGuide = null;
+let mediaRecorder = null;
+let audioStream = null;
+let audioContext = null;
+let analyserNode = null;
+let micActive = false;
+let levelAnimFrame = null;
+const CHUNK_INTERVAL_MS = 5000;
 
 function setStatus(id, msg, loading=false) {
   const el = document.getElementById(id);
@@ -529,11 +560,120 @@ async function startCall() {
     handleWSMessage(msg);
   };
 
-  ws.onclose = () => { console.log('WebSocket closed'); };
+  ws.onclose = () => {
+    console.log('WebSocket closed');
+    stopMic();
+  };
 
   document.getElementById('btn-start-call').disabled = true;
   document.getElementById('btn-end-call').disabled = false;
   document.getElementById('btn-demo').disabled = false;
+  document.getElementById('btn-mic').disabled = false;
+
+  // Auto-start mic if available
+  try {
+    await startMic();
+  } catch(e) {
+    console.log('Mic not available, using text fallback:', e.message);
+    setMicStatus('No mic — use text input', false);
+  }
+}
+
+async function startMic() {
+  audioStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+  });
+
+  // Audio level visualizer
+  audioContext = new AudioContext();
+  const source = audioContext.createMediaStreamSource(audioStream);
+  analyserNode = audioContext.createAnalyser();
+  analyserNode.fftSize = 256;
+  source.connect(analyserNode);
+  startLevelMeter();
+
+  // MediaRecorder — chunks every CHUNK_INTERVAL_MS
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm';
+
+  mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+
+  mediaRecorder.ondataavailable = async (event) => {
+    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(event.data);
+    }
+  };
+
+  mediaRecorder.start(CHUNK_INTERVAL_MS);
+  micActive = true;
+  updateMicUI(true);
+}
+
+function stopMic() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  if (audioStream) {
+    audioStream.getTracks().forEach(t => t.stop());
+    audioStream = null;
+  }
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
+  if (levelAnimFrame) {
+    cancelAnimationFrame(levelAnimFrame);
+    levelAnimFrame = null;
+  }
+  mediaRecorder = null;
+  micActive = false;
+  updateMicUI(false);
+}
+
+function toggleMic() {
+  if (micActive) {
+    stopMic();
+  } else {
+    startMic().catch(e => {
+      console.error('Mic error:', e);
+      setMicStatus('Mic error: ' + e.message, false);
+    });
+  }
+}
+
+function updateMicUI(active) {
+  const btn = document.getElementById('btn-mic');
+  const status = document.getElementById('mic-status');
+  if (active) {
+    btn.className = 'mic-btn recording';
+    status.className = 'mic-status live';
+    status.textContent = 'Recording — streaming every 5s';
+  } else {
+    btn.className = 'mic-btn idle';
+    status.className = 'mic-status';
+    status.textContent = 'Mic off';
+    document.getElementById('audio-level-fill').style.width = '0%';
+  }
+}
+
+function setMicStatus(text, isLive) {
+  const status = document.getElementById('mic-status');
+  status.textContent = text;
+  status.className = isLive ? 'mic-status live' : 'mic-status';
+}
+
+function startLevelMeter() {
+  const data = new Uint8Array(analyserNode.frequencyBinCount);
+  function tick() {
+    if (!analyserNode) return;
+    analyserNode.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    const pct = Math.min(100, (avg / 128) * 100);
+    document.getElementById('audio-level-fill').style.width = pct + '%';
+    levelAnimFrame = requestAnimationFrame(tick);
+  }
+  tick();
 }
 
 function handleWSMessage(msg) {
@@ -645,9 +785,11 @@ function runDemo() {
 }
 
 async function endCall() {
+  stopMic();
   try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e) {}
   if (ws) { ws.close(); ws = null; }
   document.getElementById('btn-end-call').disabled = true;
+  document.getElementById('btn-mic').disabled = true;
   document.getElementById('btn-summarize').disabled = false;
   document.getElementById('btn-export').disabled = false;
 }
