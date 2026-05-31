@@ -101,7 +101,7 @@ Server → client (the expert page consumes a subset):
 - `demo_progress` / `demo_complete` — ignored (test path only).
 
 Client → server:
-- raw audio **bytes** (mic chunks, webm/opus, every 5 s) → STT.
+- raw audio **bytes** (one complete webm/opus blob per utterance, cut by client-side VAD endpointing) → STT.
 - (`text_input`, `run_demo` exist but the expert page does not send them.)
 
 ---
@@ -123,7 +123,7 @@ Client → server:
 
 **Waveform behavior:** idle = calm low-amplitude animation; while TTS is playing, amplitude is driven by an `AnalyserNode` tap on the playback node, so it genuinely visualizes the agent's voice. (The waveform represents the **agent's** voice, per the brief — the expert's speaking is reflected by the "Listening…" state, not the waveform.)
 
-**Mic:** reuse `index.html`'s capture pattern — `getUserMedia` → `MediaRecorder` (`audio/webm;codecs=opus`, 5 s chunks) → `ws.send(blob)`. Auto-start on connect; if unavailable, show a text-input fallback (as `index.html` does).
+**Mic:** reuse `index.html`'s capture pattern — `getUserMedia` → `MediaRecorder` driven by **client-side VAD endpointing** (no timeslice; an energy poll loop cuts one complete WebM blob per utterance after a trailing pause) → `ws.send(blob)`. This replaced the original fixed 5 s chunking, whose 2nd+ fragments were headerless and undecodable by the backend STT. Auto-start on connect; if unavailable, show a text-input fallback (as `index.html` does).
 
 **Leave call:** stop mic, close WS, show a simple "Call ended." end state.
 

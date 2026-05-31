@@ -569,7 +569,21 @@ Create `expert_call_agent/static/expert.html` with exactly this content:
 <script>
 let ws = null, sessionId = null, micRecorder = null, micStream = null;
 let audioCtx = null, micActive = false, waveRaf = null;
-const CHUNK_MS = 5000;
+
+// VAD (voice-activity detection) utterance endpointing — kept in sync with the
+// canonical implementation in index.html. One complete WebM blob per utterance:
+// MediaRecorder.start() with NO timeslice yields a single decodable blob on stop(),
+// and a poll loop cuts the segment after a trailing pause. (Fixed-interval chunking
+// produced headerless 2nd+ fragments the backend's STT couldn't decode — that bug
+// is the whole reason this endpointer exists.)
+const VAD_POLL_MS = 50;             // energy sampling cadence
+const VAD_SILENCE_RMS = 0.015;      // RMS at/under this counts as silence
+const VAD_SILENCE_MS = 800;         // trailing silence that ends an utterance
+const VAD_MIN_UTTERANCE_MS = 400;   // drop blips shorter than this
+const VAD_MAX_UTTERANCE_MS = 20000; // force-cut a long monologue
+let micAnalyser = null, vadInterval = null, vadBuf = null;
+let segmentStart = 0, lastVoice = 0, sawSpeech = false, segmentValid = false, peakRms = 0;
+
 const forcedSession = new URLSearchParams(location.search).get('session');
 const $ = id => document.getElementById(id);
 
@@ -617,7 +631,7 @@ function connectWS(){
   ws = new WebSocket(`${proto}//${location.host}/api/call/ws/${sessionId}`);
   ws.onopen = () => setState(micActive ? 'Listening…' : 'Connected');
   ws.onmessage = e => handleMsg(JSON.parse(e.data));
-  ws.onclose = () => { setState('Disconnected'); setMic(false, 'Mic off'); };
+  ws.onclose = () => { setState('Disconnected'); stopMic(); };
 }
 
 function handleMsg(msg){
@@ -683,15 +697,81 @@ function stopWave(){
 
 async function startMic(){
   micStream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true }
+    audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
   });
+
+  // Mic-energy analyser drives the VAD endpointer. Reuse the shared audioCtx
+  // (already created + resumed by the Join gesture); the mic source feeds ONLY the
+  // analyser — never audioCtx.destination — so the expert never hears themselves.
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  const source = audioCtx.createMediaStreamSource(micStream);
+  micAnalyser = audioCtx.createAnalyser();
+  micAnalyser.fftSize = 256;
+  source.connect(micAnalyser);
+  vadBuf = new Uint8Array(micAnalyser.fftSize);
+
   const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
   micRecorder = new MediaRecorder(micStream, { mimeType: mime });
+  // One segment per utterance: stop() flushes a single complete WebM blob;
+  // segmentValid gates whether the blob is worth sending.
   micRecorder.ondataavailable = ev => {
-    if (ev.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data);
+    if (segmentValid && ev.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data);
   };
-  micRecorder.start(CHUNK_MS);
+  // After each cut, immediately begin the next segment (unless the mic is off).
+  micRecorder.onstop = () => { if (micActive && micRecorder) startSegment(); };
+
+  startSegment();
+  vadInterval = setInterval(vadTick, VAD_POLL_MS);
   setMic(true, 'Mic on — Shaun hears you');
+}
+
+// Begin recording a fresh utterance segment and reset its VAD state.
+function startSegment(){
+  segmentStart = performance.now();
+  lastVoice = segmentStart;
+  sawSpeech = false;
+  peakRms = 0;
+  segmentValid = false;
+  if (micRecorder && micRecorder.state === 'inactive') micRecorder.start(); // no timeslice → one blob at stop()
+}
+
+// End the current segment; ondataavailable decides whether to actually send it.
+function endSegment(reason){
+  const dur = performance.now() - segmentStart;
+  segmentValid = sawSpeech && dur >= VAD_MIN_UTTERANCE_MS;
+  if (micRecorder && micRecorder.state === 'recording') micRecorder.stop(); // → ondataavailable → onstop → startSegment()
+}
+
+// Poll mic energy; cut the segment on a trailing pause or the max-length cap.
+function vadTick(){
+  if (!micAnalyser || !micRecorder || micRecorder.state !== 'recording') return;
+  micAnalyser.getByteTimeDomainData(vadBuf);
+  let sum = 0;
+  for (let i = 0; i < vadBuf.length; i++){ const v = (vadBuf[i] - 128) / 128; sum += v * v; }
+  const rms = Math.sqrt(sum / vadBuf.length);
+  const now = performance.now();
+  if (rms > peakRms) peakRms = rms;
+  if (rms >= VAD_SILENCE_RMS){ sawSpeech = true; lastVoice = now; }
+  if (sawSpeech && now - lastVoice >= VAD_SILENCE_MS) endSegment('pause');
+  else if (now - segmentStart >= VAD_MAX_UTTERANCE_MS) endSegment('max-length');
+}
+
+// Tear down the mic + VAD without touching the WS or the state line.
+function stopMic(){
+  micActive = false; // set first so onstop won't restart a segment
+  if (vadInterval){ clearInterval(vadInterval); vadInterval = null; }
+  if (micRecorder && micRecorder.state !== 'inactive'){
+    // Flush a final in-progress utterance if it contained speech.
+    segmentValid = sawSpeech && performance.now() - segmentStart >= VAD_MIN_UTTERANCE_MS;
+    micRecorder.stop();
+  }
+  if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  micRecorder = null;
+  micAnalyser = null;
+  vadBuf = null;
+  sawSpeech = false;
+  setMic(false, 'Mic off');
 }
 
 function setMic(on, text){
@@ -701,10 +781,8 @@ function setMic(on, text){
 }
 
 function leaveCall(){
-  if (micRecorder && micRecorder.state !== 'inactive') micRecorder.stop();
-  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  stopMic();
   if (ws) { ws.close(); ws = null; }
-  setMic(false, 'Mic off');
   setState('Call ended');
   $('text-input').disabled = true;
 }
@@ -823,7 +901,7 @@ Start the server (`python3 run.py`). Over the IAP tunnel:
 3. Click **Start Expert Call** → a new tab opens at `/expert?session=<id>`.
 4. In the expert tab, click **Join call** and grant mic permission.
 5. **Confirm:** after ~2 seconds, Shaun greets you — you hear TTS audio, the waveform reacts to the voice, the state shows "Speaking…", and an agent bubble appears in the transcript. State returns to "Listening…" when the audio ends.
-6. Either speak an answer (mic) or type one in the fallback box + Enter. Confirm an expert (blue, right) bubble appears, state goes "Thinking…", and Shaun follows up with the next question (audio + bubble) — i.e. the agent drives.
+6. Either speak an answer (mic — it auto-sends ~0.8 s after you stop talking, via the VAD endpointer) or type one in the fallback box + Enter. Confirm an expert (blue, right) bubble appears, state goes "Thinking…", and Shaun follows up with the next question (audio + bubble) — i.e. the agent drives.
 7. Click **Leave call** → mic stops, state shows "Call ended".
 
 Expected: all of the above; the only acceptable console noise is a favicon 404.
