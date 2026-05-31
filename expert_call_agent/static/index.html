@@ -218,8 +218,6 @@
 <div class="phase" id="phase-call">
   <div class="phase-title">Phase 2: Live Call</div>
   <div class="controls">
-    <button class="btn-success" id="btn-start-call" onclick="startCall()" disabled>Start Call</button>
-    <button class="btn-danger" id="btn-end-call" onclick="endCall()" disabled>End Call</button>
     <button class="btn-outline" id="btn-demo" onclick="runDemo()" disabled>Run Demo Simulation</button>
     <button class="btn-primary" id="btn-expert-call" onclick="startExpertCall()" disabled>Start Expert Call</button>
     <span id="demo-progress"></span>
@@ -505,7 +503,6 @@ async function generateGuide() {
     currentGuide = data.call_guide;
     renderGuide(data.call_guide);
     setStatus('guide-status', 'Call guide ready.');
-    document.getElementById('btn-start-call').disabled = false;
     document.getElementById('btn-demo').disabled = false;
     document.getElementById('btn-expert-call').disabled = false;
   } catch(e) {
@@ -604,8 +601,6 @@ async function startCall() {
     stopMic();
   };
 
-  document.getElementById('btn-start-call').disabled = true;
-  document.getElementById('btn-end-call').disabled = false;
   document.getElementById('btn-demo').disabled = false;
   document.getElementById('btn-mic').disabled = false;
   callActive = true;
@@ -640,7 +635,6 @@ async function startExpertCall() {
   monitorWs = new WebSocket(`${proto}//${location.host}/api/call/monitor/${sessionId}`);
   monitorWs.onmessage = (event) => handleWSMessage(JSON.parse(event.data));
   monitorWs.onclose = () => console.log('Monitor channel closed');
-  document.getElementById('btn-end-call').disabled = false;
   window.open(`/expert?session=${sessionId}`, '_blank');
 }
 
@@ -854,6 +848,11 @@ function handleWSMessage(msg) {
       document.getElementById('btn-summarize').disabled = false;
       document.getElementById('btn-export').disabled = false;
       break;
+    case 'call_ended':
+      // The expert ended the call from /expert; unlock the post-call summary controls.
+      document.getElementById('btn-summarize').disabled = false;
+      document.getElementById('btn-export').disabled = false;
+      break;
     case 'error':
       console.error('Agent error:', msg.message);
       break;
@@ -925,7 +924,7 @@ function sendExpertText() {
   const text = input.value.trim();
   if (!text) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    alert('Call not active. Click "Start Call" first.');
+    alert('Call not active.');
     return;
   }
   ws.send(JSON.stringify({ type: 'text_input', text: text, speaker: 'expert' }));
@@ -936,24 +935,6 @@ function runDemo() {
   if (!ws) { startCall(); setTimeout(() => { ws.send(JSON.stringify({ type: 'run_demo' })); }, 1000); }
   else { ws.send(JSON.stringify({ type: 'run_demo' })); }
   document.getElementById('btn-demo').disabled = true;
-}
-
-async function endCall() {
-  callActive = false;
-  stopMic();
-  ttsQueue = [];
-  ttsPlaying = false;
-  if (ws) {
-    try { ws.close(); } catch(e) {}
-    ws = null;
-  }
-  try { await fetch(`/api/call/end/${sessionId}`, { method: 'POST' }); } catch(e) {}
-  if (monitorWs) { monitorWs.close(); monitorWs = null; }
-  document.getElementById('btn-end-call').disabled = true;
-  document.getElementById('btn-mic').disabled = true;
-  document.getElementById('btn-start-call').disabled = false;
-  document.getElementById('btn-summarize').disabled = false;
-  document.getElementById('btn-export').disabled = false;
 }
 
 async function generateSummary() {
@@ -1059,7 +1040,6 @@ async function autoPreload() {
     currentGuide = guideData.call_guide;
     renderGuide(guideData.call_guide);
     setStatus('guide-status', 'Call guide ready.');
-    document.getElementById('btn-start-call').disabled = false;
     document.getElementById('btn-demo').disabled = false;
     const expertBtn = document.getElementById('btn-expert-call');
     if (expertBtn) expertBtn.disabled = false;

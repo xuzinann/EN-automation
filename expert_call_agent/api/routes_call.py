@@ -116,6 +116,9 @@ async def start_call(request: Request, session_id: str):
 async def end_call(request: Request, session_id: str):
     sessions = request.app.state.sessions
     await sessions.update_session(session_id, status="post_call")
+    # Notify the operator console (a read-only monitor) so it can unlock the
+    # post-call summary controls without the operator ending the call manually.
+    await sessions.broadcast_to_monitors(session_id, {"type": "call_ended"})
     return {"status": "post_call", "session_id": session_id}
 
 
