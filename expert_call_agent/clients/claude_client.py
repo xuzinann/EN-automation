@@ -1,7 +1,7 @@
-import google.auth
-import google.auth.transport.requests
 import httpx
+
 import config
+from clients.gcp_auth import get_auth
 
 
 class ClaudeClient:
@@ -12,10 +12,9 @@ class ClaudeClient:
         self._http_client = httpx.AsyncClient(timeout=60.0)
 
     async def _get_headers(self) -> dict:
-        credentials, _ = google.auth.default()
-        credentials.refresh(google.auth.transport.requests.Request())
+        token, _ = await get_auth()
         return {
-            "Authorization": f"Bearer {credentials.token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
@@ -24,6 +23,7 @@ class ClaudeClient:
         messages: list[dict],
         system: str | None = None,
         max_tokens: int = 4096,
+        temperature: float | None = None,
     ) -> str:
         url = (
             f"https://{self.region}-aiplatform.googleapis.com/v1/"
@@ -37,6 +37,8 @@ class ClaudeClient:
         }
         if system:
             body["system"] = system
+        if temperature is not None:
+            body["temperature"] = temperature
 
         headers = await self._get_headers()
         resp = await self._http_client.post(url, headers=headers, json=body)
