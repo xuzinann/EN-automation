@@ -1,8 +1,8 @@
-# Project Brief: AI Infrastructure Industry — Competitive Landscape Study
+# Project Brief: CoreWeave — Competitive Landscape & Platform Investment Evaluation
 
 ## Engagement Overview
 
-Apex Capital Partners is conducting a competitive landscape study of the AI infrastructure sector to evaluate a potential platform investment. The study will map the competitive dynamics, unit economics, customer concentration, capacity strategies, and defensibility of the leading GPU cloud and AI infrastructure providers.
+Apex Capital Partners is evaluating CoreWeave as a potential platform investment in the AI infrastructure sector. This competitive landscape study will assess CoreWeave's positioning, defensibility, and growth trajectory by mapping the competitive dynamics, unit economics, customer concentration, capacity strategies, and differentiation across the GPU cloud and AI infrastructure market. CoreWeave is the primary subject company; the N=15 expert calls will cover CoreWeave directly and its key competitors to build a comprehensive competitive picture.
 
 ## Scope
 

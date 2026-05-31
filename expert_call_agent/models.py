@@ -21,6 +21,9 @@ class ProjectContext(BaseModel):
     company_name: str
     industry: str
     deal_type: str
+    study_type: str = ""
+    num_calls: int = 1
+    call_targets: list[str] = []
     key_hypotheses: list[str] = []
     known_data_points: list[DataPoint] = []
     gaps_to_fill: list[str] = []

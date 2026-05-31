@@ -352,13 +352,34 @@ async function useSampleBrief() {
 function renderContext(ctx) {
   let html = '';
 
-  // Meta cards
+  // Meta cards - top row
   html += '<div class="ctx-meta">';
-  html += `<div class="ctx-meta-item"><div class="label">Company</div><div class="value">${ctx.company_name}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Subject Company</div><div class="value">${ctx.company_name}</div></div>`;
   html += `<div class="ctx-meta-item"><div class="label">Industry</div><div class="value">${ctx.industry}</div></div>`;
-  html += `<div class="ctx-meta-item"><div class="label">Deal Type</div><div class="value">${ctx.deal_type}</div></div>`;
-  html += `<div class="ctx-meta-item"><div class="label">Expert Profile</div><div class="value">${ctx.expert_profile ? ctx.expert_profile.substring(0, 80) + '...' : 'N/A'}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Deal Stage</div><div class="value">${ctx.deal_type}</div></div>`;
+  html += `<div class="ctx-meta-item"><div class="label">Study Type</div><div class="value">${ctx.study_type || 'Due Diligence'}</div></div>`;
   html += '</div>';
+
+  // Call scope bar
+  const numCalls = ctx.num_calls || 1;
+  html += `<div style="background:#e8f5e9; border-radius:6px; padding:10px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center;">`;
+  html += `<div><span style="font-size:11px; font-weight:700; text-transform:uppercase; color:#2e7d32; letter-spacing:0.5px;">Call Scope</span>`;
+  html += `<div style="font-size:20px; font-weight:700; color:#1b5e20;">N = ${numCalls}</div></div>`;
+  if (ctx.call_targets?.length) {
+    html += `<div style="font-size:12px; color:#2e7d32; text-align:right;">${ctx.call_targets.length} organizations targeted</div>`;
+  }
+  html += '</div>';
+
+  // Call targets
+  if (ctx.call_targets?.length) {
+    html += '<div class="ctx-section">';
+    html += '<div class="ctx-section-title">Call Targets</div>';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:4px;">';
+    ctx.call_targets.forEach((t, i) => {
+      html += `<span style="font-size:11px; background:#f0f4f8; border:1px solid #dde4ed; padding:3px 8px; border-radius:4px; color:#1a1a2e;">${i+1}. ${t}</span>`;
+    });
+    html += '</div></div>';
+  }
 
   // Hypotheses
   if (ctx.key_hypotheses?.length) {
